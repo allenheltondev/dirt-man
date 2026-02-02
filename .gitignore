@@ -1,0 +1,259 @@
+# ============================================================================
+# Dirt Man - Multi-Project .gitignore
+# ============================================================================
+
+# ============================================================================
+# Firmware (PlatformIO / C++ / ESP32)
+# ============================================================================
+
+# PlatformIO
+firmware/.pio/
+firmware/.vscode/
+firmware/.clang/
+firmware/.cache/
+
+# Auto-generated version files
+firmware/include/Version.h
+
+# Build artifacts
+firmware/build/
+firmware/dist/
+
+# ============================================================================
+# Backend (Rust)
+# ============================================================================
+
+# Rust build artifacts
+backend/target/
+backend/Cargo.lock  # Uncomment if this is a library: # backend/Cargo.lock
+
+# Rust debug files
+backend/**/*.rs.bk
+backend/**/*.pdb
+
+# ============================================================================
+# UI (Future - Node.js / React / Vue / etc.)
+# ============================================================================
+
+# Node modules
+ui/node_modules/
+ui/dist/
+ui/build/
+ui/.next/
+ui/out/
+
+# Dependency lock files (keep package-lock.json or yarn.lock, remove others)
+ui/package-lock.json
+ui/yarn.lock
+ui/pnpm-lock.yaml
+
+# Environment variables
+ui/.env
+ui/.env.local
+ui/.env.*.local
+
+# UI build artifacts
+ui/.cache/
+ui/.parcel-cache/
+ui/.nuxt/
+ui/.output/
+
+# ============================================================================
+# IDEs and Editors
+# ============================================================================
+
+# Visual Studio Code
+.vscode/
+!.vscode/extensions.json
+!.vscode/settings.json.example
+
+# JetBrains IDEs (IntelliJ, CLion, RustRover, WebStorm)
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# Visual Studio
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Vim
+*.swp
+*.swo
+*~
+.*.sw?
+
+# Emacs
+*~
+\#*\#
+.\#*
+
+# Sublime Text
+*.sublime-workspace
+*.sublime-project
+
+# ============================================================================
+# Operating Systems
+# ============================================================================
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Linux
+.directory
+.Trash-*
+
+# ============================================================================
+# Environment and Secrets
+# ============================================================================
+
+# Environment files
+.env
+.env.local
+.env.*.local
+.env.production
+.env.development
+.env.test
+
+# Secrets and credentials
+secrets/
+*.key
+*.pem
+*.p12
+*.pfx
+credentials.json
+service-account.json
+
+# API tokens and config (if not using .env)
+config/local.toml
+config/secrets.toml
+backend/config/local.toml
+backend/config/secrets.toml
+
+# ============================================================================
+# Logs and Databases
+# ============================================================================
+
+# Log files
+*.log
+logs/
+*.log.*
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+*.db-shm
+*.db-wal
+
+# ============================================================================
+# Testing and Coverage
+# ============================================================================
+
+# Test coverage
+coverage/
+*.lcov
+.nyc_output/
+htmlcov/
+.coverage
+.coverage.*
+
+# Test artifacts
+test-results/
+junit.xml
+
+# ============================================================================
+# Documentation
+# ============================================================================
+
+# Generated documentation
+docs/_build/
+docs/.doctrees/
+site/
+
+# ============================================================================
+# Temporary and Cache Files
+# ============================================================================
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+*.bak
+*.backup
+
+# Cache directories
+.cache/
+__pycache__/
+*.pyc
+*.pyo
+
+# ============================================================================
+# Build and Distribution
+# ============================================================================
+
+# Generic build artifacts
+build/
+dist/
+out/
+target/
+
+# Compiled binaries
+*.exe
+*.dll
+*.so
+*.dylib
+*.a
+*.lib
+
+# Archives
+*.zip
+*.tar.gz
+*.rar
+*.7z
+
+# ============================================================================
+# Project Specific
+# ============================================================================
+
+# Firmware calibration data (if you want to keep it private)
+# firmware/calibration.json
+
+# Device-specific configurations (if you want to keep them private)
+# device-configs/
+
+# Test hardware data
+# test-data/
+
+# ============================================================================
+# Optional: Version tracking
+# ============================================================================
+
+# Uncomment if you don't want to track version.txt
+# firmware/version.txt
+
+# ============================================================================
+# Keep these files
+# ============================================================================
+
+# Force include important files that might be ignored by patterns above
+!.gitignore
+!.gitkeep
+!.github/
+!README.md
+!LICENSE

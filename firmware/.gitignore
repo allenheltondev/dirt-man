@@ -1,0 +1,9 @@
+# PlatformIO
+.pio/
+.vscode/
+
+# Auto-generated version files
+include/Version.h
+
+# Optional: Uncomment to track version.txt in git
+# version.txt
