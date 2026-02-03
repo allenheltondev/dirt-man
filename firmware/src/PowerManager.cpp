@@ -135,4 +135,27 @@ float PowerManager::calculateVoltageFromADC(uint16_t adcValue) {
     return voltage;
 }
 
+void PowerManager::checkAndTriggerDeepSleep(bool enableDeepSleep,
+                                            uint32_t dataUploadIntervalSeconds) {
+    // Only enter deep sleep if the flag is enabled
+    if (!enableDeepSleep) {
+        return;
+    }
+
+    // Convert data upload interval from seconds to milliseconds
+    uint32_t sleepDurationMs = dataUploadIntervalSeconds * 1000;
+
+    // Log deep sleep entry
+#ifdef ARDUINO
+    Serial.print("Deep sleep enabled. Entering deep sleep for ");
+    Serial.print(dataUploadIntervalSeconds);
+    Serial.println(" seconds...");
+    Serial.flush();  // Ensure message is sent before sleep
+#endif
+
+    // Enter deep sleep with wake-up timer configured to data upload interval
+    // Note: This will reset the ESP32 on wake-up
+    enterDeepSleep(sleepDurationMs);
+}
+
 #endif  // UNIT_TEST

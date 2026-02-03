@@ -1,5 +1,7 @@
 # ESP32 Sensor Firmware
 
+![Version](https://img.shields.io/badge/version-1.0.16-blue)
+
 Environmental monitoring system for ESP32 that collects sensor data, displays real-time information on a TFT screen, and transmits averaged readings to a remote API via WiFi.
 
 ## Features
@@ -74,6 +76,7 @@ See [docs/CALIBRATION.md](docs/CALIBRATION.md) for detailed calibration procedur
 
 ### Essential Guides
 
+- **[Configuration File Example](docs/CONFIG_FILE_EXAMPLE.md)** - Config file format and examples
 - **[Hardware Wiring](docs/HARDWARE_WIRING.md)** - Complete pin assignments and wiring diagrams
 - **[Serial Console](docs/SERIAL_CONSOLE.md)** - Configuration commands and usage
 - **[Calibration](docs/CALIBRATION.md)** - Soil moisture sensor calibration procedures
@@ -107,7 +110,51 @@ See [docs/CALIBRATION.md](docs/CALIBRATION.md) for detailed calibration procedur
 
 ## Configuration
 
-All configuration is done via serial console - no recompilation needed:
+The firmware supports two configuration methods:
+
+### 1. Configuration File (Recommended)
+
+Create a `/config.json` file on the LittleFS filesystem with your settings:
+
+```json
+{
+  "schema_version": 1,
+  "checksum": "A1B2C3D4",
+  "wifi_ssid": "MyNetwork",
+  "wifi_password": "SecurePassword123",
+  "backend_url": "https://api.example.com/sensors",
+  "friendly_name": "Garden Sensor",
+  "display_brightness": 200,
+  "data_upload_interval": 300,
+  "sensor_read_interval": 30,
+  "enable_deep_sleep": false
+}
+```
+
+**Required Fields:**
+- `wifi_ssid`: WiFi network name
+- `wifi_password`: WiFi password (can be empty for open networks)
+- `backend_url`: Backend server URL (must start with http:// or https://)
+
+**Optional Fields (with defaults):**
+- `friendly_name`: Device name (default: "ESP32-Sensor-{hardware_id}")
+- `display_brightness`: 0-255 (default: 128)
+- `data_upload_interval`: Seconds between uploads (default: 60)
+- `sensor_read_interval`: Seconds between readings (default: 10)
+- `enable_deep_sleep`: Enable power saving mode (default: false)
+
+**Checksum Calculation:**
+The `checksum` field contains a CRC32 hash for integrity verification. To calculate:
+1. Set `checksum` to empty string `""`
+2. Serialize JSON to minified format with fixed field order
+3. Calculate CRC32 over UTF-8 bytes
+4. Convert to 8-character hex string
+
+See [docs/CONFIG_FILE_EXAMPLE.md](docs/CONFIG_FILE_EXAMPLE.md) for detailed examples.
+
+### 2. Serial Console Configuration
+
+Interactive configuration via serial console (115200 baud):
 
 - **WiFi credentials**: SSID and password
 - **API endpoint**: URL and authentication token
@@ -116,6 +163,14 @@ All configuration is done via serial console - no recompilation needed:
 - **Soil calibration**: Dry and wet ADC values
 
 Configuration is stored in non-volatile storage (NVS) and persists across reboots.
+
+### Configuration Priority
+
+1. **Config file** (`/config.json`) - Loaded first if present
+2. **NVS storage** - Used if config file missing or invalid
+3. **Defaults** - Applied to optional fields only
+
+**Provisioning Mode:** If required fields are missing from all sources, the device enters provisioning mode and requires configuration via serial console before normal operation.
 
 ## API Integration
 

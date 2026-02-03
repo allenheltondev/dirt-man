@@ -3,10 +3,47 @@
 
 #include "ErrorLogger.h"
 
-StateManager::StateManager() {}
+StateManager::StateManager() : currentState(SystemState::NORMAL) {}
 
 void StateManager::initialize() {
     // NVS will be opened when needed
+    currentState = SystemState::NORMAL;
+}
+
+void StateManager::enterProvisioningMode() {
+    currentState = SystemState::PROVISIONING;
+    ErrorLogger::info(ErrorType::SYSTEM, "Entered provisioning mode", "StateManager");
+}
+
+void StateManager::exitProvisioningMode() {
+    currentState = SystemState::NORMAL;
+    ErrorLogger::info(ErrorType::SYSTEM, "Exited provisioning mode", "StateManager");
+}
+
+bool StateManager::isInProvisioningMode() const {
+    return currentState == SystemState::PROVISIONING;
+}
+
+SystemState StateManager::getCurrentState() const {
+    return currentState;
+}
+
+void StateManager::setSystemState(SystemState state) {
+    currentState = state;
+    const char* stateName = "UNKNOWN";
+    switch (state) {
+        case SystemState::NORMAL:
+            stateName = "NORMAL";
+            break;
+        case SystemState::PROVISIONING:
+            stateName = "PROVISIONING";
+            break;
+        case SystemState::ERROR:
+            stateName = "ERROR";
+            break;
+    }
+    ErrorLogger::info(ErrorType::SYSTEM, String("System state changed to: ") + stateName,
+                      "StateManager");
 }
 
 bool StateManager::persistState(const AveragedData* dataBuffer, uint16_t dataBufferCount,

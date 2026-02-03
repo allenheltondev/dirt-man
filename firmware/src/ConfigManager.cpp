@@ -10,7 +10,12 @@
 #define MAX_ADC_VALUE 4095
 #endif
 
-ConfigManager::ConfigManager() {}
+ConfigManager::ConfigManager()
+    : registrationCallback(nullptr),
+      bootIdRef(nullptr),
+      touchDetected(false),
+      touchType(TouchControllerType::NONE),
+      provisioningMode(false) {}
 
 ConfigManager::~ConfigManager() {
 #ifdef ARDUINO
@@ -23,42 +28,141 @@ void ConfigManager::initialize() {
     nvs.begin("config", false);
 #endif
 
+    // Initialize LittleFS via ConfigFileManager
+    if (!fileManager.initialize()) {
+#ifdef ARDUINO
+        Serial.println("[WARN] Failed to initialize LittleFS");
+#endif
+    }
+
     if (!loadConfig()) {
         setDefaults();
         saveConfig();
     }
+
+    // Check required fields after loading
+#ifdef ARDUINO
+    if (!hasRequiredFields()) {
+        String missing = getMissingRequiredFields();
+        Serial.println("[WARN] ========================================");
+        Serial.println("[WARN] PROVISIONING MODE REQUIRED");
+        Serial.print("[WARN] Missing required fields: ");
+        Serial.println(missing);
+        Serial.println("[WARN] Use serial console to configure device");
+        Serial.println("[WARN] Commands: wifi, api, save");
+        Serial.println("[WARN] ========================================");
+    }
+#endif
+}
+
+bool ConfigManager::loadFromFile() {
+#ifdef ARDUINO
+    ConfigFileData fileData;
+    ConfigLoadResult result = fileManager.loadConfig(fileData);
+
+    if (result == ConfigLoadResult::SUCCESS) {
+        Serial.println("[INFO] Config file loaded successfully");
+        applyConfigFileData(fileData);
+
+        // Validate config structure
+        if (!validateConfig()) {
+            Serial.println("[ERROR] Config file validation failed");
+            return false;
+        }
+
+        // Check required fields separately
+        if (!hasRequiredFields()) {
+            String missing = getMissingRequiredFields();
+            Serial.print("[ERROR] Config file missing required fields: ");
+            Serial.println(missing);
+            // Return true to indicate file was parsed successfully
+            // but caller should check hasRequiredFields() separately
+            return true;
+        }
+
+        return true;
+    } else {
+        // Log the specific error
+        switch (result) {
+            case ConfigLoadResult::FILE_NOT_FOUND:
+                Serial.println("[INFO] Config file not found");
+                break;
+            case ConfigLoadResult::PARSE_ERROR:
+                Serial.println("[ERROR] Config file parse error");
+                break;
+            case ConfigLoadResult::SCHEMA_ERROR:
+                Serial.println("[ERROR] Config file schema error");
+                break;
+            case ConfigLoadResult::CHECKSUM_ERROR:
+                Serial.println("[ERROR] Config file checksum error");
+                break;
+            case ConfigLoadResult::FS_MOUNT_ERROR:
+                Serial.println("[ERROR] Filesystem mount error");
+                break;
+            case ConfigLoadResult::READ_ERROR:
+                Serial.println("[ERROR] Config file read error");
+                break;
+            default:
+                Serial.println("[ERROR] Unknown config file error");
+                break;
+        }
+        Serial.print("[ERROR] ");
+        Serial.println(fileManager.getLastError());
+        return false;
+    }
+#else
+    return false;
+#endif
 }
 
 bool ConfigManager::loadConfig() {
 #ifdef ARDUINO
-    if (!nvs.isKey("initialized")) {
-        return false;
+    // Priority 1: Try loading from config file
+    if (loadFromFile()) {
+        Serial.println("[INFO] Configuration loaded from file");
+        return true;
     }
 
-    config.wifiSsid = nvs.getString("wifiSsid", "");
-    config.wifiPassword = nvs.getString("wifiPass", "");
-    config.apiEndpoint = nvs.getString("apiEndpoint", "");
-    config.apiToken = nvs.getString("apiToken", "");
-    config.deviceId = nvs.getString("deviceId", "");
+    // Priority 2: Try loading from NVS
+    if (nvs.isKey("initialized")) {
+        Serial.println("[INFO] Loading configuration from NVS");
 
-    config.readingIntervalMs = nvs.getUInt("readingInt", 5000);
-    config.publishIntervalSamples = nvs.getUShort("publishInt", 20);
-    config.pageCycleIntervalMs = nvs.getUShort("pageCycle", 10000);
+        config.wifiSsid = nvs.getString("wifiSsid", "");
+        config.wifiPassword = nvs.getString("wifiPass", "");
+        config.apiEndpoint = nvs.getString("apiEndpoint", "");
+        config.apiToken = nvs.getString("apiToken", "");
+        config.deviceId = nvs.getString("deviceId", "");
 
-    config.soilDryAdc = nvs.getUShort("soilDryAdc", 3000);
-    config.soilWetAdc = nvs.getUShort("soilWetAdc", 1500);
+        config.readingIntervalMs = nvs.getUInt("readingInt", 5000);
+        config.publishIntervalSamples = nvs.getUShort("publishInt", 20);
+        config.pageCycleIntervalMs = nvs.getUShort("pageCycle", 10000);
 
-    config.temperatureInFahrenheit = nvs.getBool("tempF", false);
-    config.soilMoistureThresholdLow = nvs.getUShort("soilThreshLow", 30);
-    config.soilMoistureThresholdHigh = nvs.getUShort("soilThreshHigh", 70);
+        config.soilDryAdc = nvs.getUShort("soilDryAdc", 3000);
+        config.soilWetAdc = nvs.getUShort("soilWetAdc", 1500);
 
-    config.batteryMode = nvs.getBool("batteryMode", false);
+        config.temperatureInFahrenheit = nvs.getBool("tempF", false);
+        config.soilMoistureThresholdLow = nvs.getUShort("soilThreshLow", 30);
+        config.soilMoistureThresholdHigh = nvs.getUShort("soilThreshHigh", 70);
 
-    // TLS/HTTPS configuration
-    config.tlsValidateServer = nvs.getBool("tlsValidate", true);
-    config.allowHttpFallback = nvs.getBool("httpFallback", false);
+        config.batteryMode = nvs.getBool("batteryMode", false);
 
-    return validateConfig();
+        // TLS/HTTPS configuration
+        config.tlsValidateServer = nvs.getBool("tlsValidate", true);
+        config.allowHttpFallback = nvs.getBool("httpFallback", false);
+
+        if (validateConfig()) {
+            // Migrate NVS config to file for future boots
+            Serial.println("[INFO] Migrating NVS config to file");
+            migrateNvsToFile();
+            return true;
+        } else {
+            Serial.println("[WARN] NVS config validation failed");
+        }
+    }
+
+    // Priority 3: No valid config found, will use defaults
+    Serial.println("[INFO] No valid configuration found, will use defaults");
+    return false;
 #else
     return false;
 #endif
@@ -71,6 +175,7 @@ bool ConfigManager::saveConfig() {
         return false;
     }
 
+    // Save to NVS first (existing behavior)
     nvs.putString("wifiSsid", config.wifiSsid);
     nvs.putString("wifiPass", config.wifiPassword);
     nvs.putString("apiEndpoint", config.apiEndpoint);
@@ -96,7 +201,38 @@ bool ConfigManager::saveConfig() {
 
     nvs.putBool("initialized", true);
 
-    return true;
+    // Also save to config file (atomic write)
+    ConfigFileData fileData;
+    fileData.schemaVersion = 1;
+    fileData.wifiSsid = config.wifiSsid;
+    fileData.wifiPassword = config.wifiPassword;
+    fileData.backendUrl = config.apiEndpoint;
+    fileData.friendlyName = config.deviceId;
+
+    // Convert intervals
+    fileData.sensorReadInterval = config.readingIntervalMs / 1000;  // ms to seconds
+
+    // Calculate upload interval from publish samples and reading interval
+    uint32_t uploadIntervalMs = config.publishIntervalSamples * config.readingIntervalMs;
+    fileData.dataUploadInterval = uploadIntervalMs / 1000;  // ms to seconds
+
+    // Display brightness - use default since not in Config struct
+    fileData.displayBrightness = 128;
+
+    // Battery mode maps to enableDeepSleep
+    fileData.enableDeepSleep = config.batteryMode;
+
+    // Save to file
+    if (fileManager.saveConfig(fileData)) {
+        Serial.println("[INFO] Configuration saved to both NVS and file");
+        return true;
+    } else {
+        Serial.println("[WARN] Configuration saved to NVS but failed to save to file");
+        Serial.print("[ERROR] ");
+        Serial.println(fileManager.getLastError());
+        // Still return true since NVS save succeeded
+        return true;
+    }
 #else
     return false;
 #endif
@@ -221,6 +357,12 @@ void ConfigManager::handleSerialConfig() {
         return;
     }
 
+    // If in provisioning mode, handle provisioning commands
+    if (provisioningMode) {
+        handleProvisioningSerialInput();
+        return;
+    }
+
     String command = Serial.readStringUntil('\n');
     command.trim();
 
@@ -253,6 +395,27 @@ void ConfigManager::handleSerialConfig() {
         Serial.println("Configuration reset to defaults");
     } else if (command == "help") {
         printConfigMenu();
+    } else if (command == "register") {
+        // Trigger manual registration via callback
+        Serial.println("Triggering manual registration...");
+        if (registrationCallback) {
+            registrationCallback();
+        } else {
+            Serial.println("ERROR: Registration callback not set");
+        }
+    } else if (command == "hwid") {
+// Display hardware ID (MAC address)
+#include "HardwareId.h"
+        Serial.print("Hardware ID: ");
+        Serial.println(HardwareId::getHardwareId());
+    } else if (command == "bootid") {
+        // Display current Boot ID
+        if (bootIdRef) {
+            Serial.print("Boot ID: ");
+            Serial.println(*bootIdRef);
+        } else {
+            Serial.println("ERROR: Boot ID not available");
+        }
     }
 #endif
 }
@@ -270,6 +433,9 @@ void ConfigManager::printConfigMenu() {
     Serial.println("save      - Save configuration to NVS");
     Serial.println("defaults  - Reset to default configuration");
     Serial.println("diag      - Show system diagnostics");
+    Serial.println("register  - Manually trigger device registration");
+    Serial.println("hwid      - Display hardware ID (MAC address)");
+    Serial.println("bootid    - Display current boot ID");
     Serial.println("help      - Show this menu");
     Serial.println("========================\n");
 #endif
@@ -462,4 +628,464 @@ String ConfigManager::sanitizeSensitiveData(const String& data) {
 
 Config& ConfigManager::getConfig() {
     return config;
+}
+
+String ConfigManager::getConfirmationId() {
+#ifdef ARDUINO
+    return nvs.getString("dev.confirm_id", "");
+#else
+    return "";
+#endif
+}
+
+void ConfigManager::setConfirmationId(const String& confirmationId) {
+#ifdef ARDUINO
+    nvs.putString("dev.confirm_id", confirmationId);
+#endif
+}
+
+bool ConfigManager::hasValidConfirmationId() {
+    String confirmationId = getConfirmationId();
+
+    if (confirmationId.length() == 0) {
+        return false;
+    }
+
+    // Validate UUID v4 format using BootId utility
+    // We need to include BootId.h for this
+    // Check length: 8-4-4-4-12 = 36 characters including hyphens
+    if (confirmationId.length() != 36) {
+#ifdef ARDUINO
+        Serial.printf("[WARN] Invalid confirmation_id length: %d (expected 36)\n",
+                      confirmationId.length());
+#endif
+        return false;
+    }
+
+    // Check hyphen positions
+    if (confirmationId[8] != '-' || confirmationId[13] != '-' || confirmationId[18] != '-' ||
+        confirmationId[23] != '-') {
+#ifdef ARDUINO
+        Serial.printf("[WARN] Invalid confirmation_id format: missing hyphens\n");
+#endif
+        return false;
+    }
+
+    // Check all other characters are hex digits
+    for (size_t i = 0; i < confirmationId.length(); i++) {
+        if (i == 8 || i == 13 || i == 18 || i == 23) {
+            continue;  // Skip hyphens
+        }
+
+        char c = confirmationId[i];
+        bool isHex = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+
+        if (!isHex) {
+#ifdef ARDUINO
+            Serial.printf("[WARN] Invalid confirmation_id: non-hex character at position %d\n", i);
+#endif
+            return false;
+        }
+    }
+
+    // Check version bits: character at position 14 must be '4'
+    if (confirmationId[14] != '4') {
+#ifdef ARDUINO
+        Serial.printf("[WARN] Invalid confirmation_id version: expected '4', got '%c'\n",
+                      confirmationId[14]);
+#endif
+        return false;
+    }
+
+    // Check variant bits: character at position 19 must be 8, 9, A, B (or lowercase)
+    char variantChar = confirmationId[19];
+    bool validVariant = (variantChar == '8' || variantChar == '9' || variantChar == 'A' ||
+                         variantChar == 'a' || variantChar == 'B' || variantChar == 'b');
+
+    if (!validVariant) {
+#ifdef ARDUINO
+        Serial.printf("[WARN] Invalid confirmation_id variant: expected 8/9/A/B, got '%c'\n",
+                      variantChar);
+#endif
+    }
+
+    return validVariant;
+}
+
+void ConfigManager::setRegistrationCallback(RegistrationCallback callback) {
+    registrationCallback = callback;
+}
+
+void ConfigManager::setBootIdReference(const String* bootId) {
+    bootIdRef = bootId;
+}
+
+void ConfigManager::applyConfigFileData(const ConfigFileData& fileData) {
+    // Map ConfigFileData fields to Config struct
+    config.wifiSsid = fileData.wifiSsid;
+    config.wifiPassword = fileData.wifiPassword;
+    config.apiEndpoint = fileData.backendUrl;
+    config.deviceId = fileData.friendlyName;
+
+    // Convert intervals
+    // dataUploadInterval (seconds) -> publishIntervalSamples
+    // Assuming readingIntervalMs is used to calculate samples
+    config.readingIntervalMs = fileData.sensorReadInterval * 1000;  // seconds to ms
+
+    // Calculate publish interval samples based on upload interval and reading interval
+    if (config.readingIntervalMs > 0) {
+        uint32_t uploadIntervalMs = fileData.dataUploadInterval * 1000;
+        config.publishIntervalSamples = uploadIntervalMs / config.readingIntervalMs;
+
+        // Ensure at least 1 sample
+        if (config.publishIntervalSamples < 1) {
+            config.publishIntervalSamples = 1;
+        }
+    } else {
+        config.publishIntervalSamples = 20;  // Default
+    }
+
+    // Display brightness is not in Config struct, so we skip it for now
+    // It would be used by DisplayManager if needed
+
+    // Battery mode maps to enableDeepSleep
+    config.batteryMode = fileData.enableDeepSleep;
+
+    // Keep existing values for fields not in ConfigFileData
+    // (soilDryAdc, soilWetAdc, temperatureInFahrenheit, thresholds, pageCycleIntervalMs, etc.)
+    // These will be loaded from NVS or use defaults
+}
+
+void ConfigManager::migrateNvsToFile() {
+#ifdef ARDUINO
+    Serial.printf("[INFO] ConfigManager: Migrating NVS config to file\n");
+
+    // Convert current Config to ConfigFileData
+    ConfigFileData fileData;
+
+    fileData.schemaVersion = 1;
+    fileData.wifiSsid = config.wifiSsid;
+    fileData.wifiPassword = config.wifiPassword;
+    fileData.backendUrl = config.apiEndpoint;
+    fileData.friendlyName = config.deviceId;
+
+    // Convert intervals
+    fileData.sensorReadInterval = config.readingIntervalMs / 1000;  // ms to seconds
+
+    // Calculate upload interval from publish samples and reading interval
+    uint32_t uploadIntervalMs = config.publishIntervalSamples * config.readingIntervalMs;
+    fileData.dataUploadInterval = uploadIntervalMs / 1000;  // ms to seconds
+
+    // Display brightness - use default since not in Config struct
+    fileData.displayBrightness = 128;
+
+    // Battery mode maps to enableDeepSleep
+    fileData.enableDeepSleep = config.batteryMode;
+
+    Serial.printf("[INFO] ConfigManager: NVS config values:\n");
+    Serial.printf("[INFO]   wifi_ssid: %s\n", fileData.wifiSsid.c_str());
+    Serial.printf("[INFO]   backend_url: %s\n", fileData.backendUrl.c_str());
+    Serial.printf("[INFO]   friendly_name: %s\n", fileData.friendlyName.c_str());
+    Serial.printf("[INFO]   sensor_read_interval: %u\n", fileData.sensorReadInterval);
+    Serial.printf("[INFO]   data_upload_interval: %u\n", fileData.dataUploadInterval);
+    Serial.printf("[INFO]   enable_deep_sleep: %d\n", fileData.enableDeepSleep);
+
+    // Save to file
+    if (fileManager.saveConfig(fileData)) {
+        Serial.printf("[INFO] ConfigManager: NVS config migrated to file successfully\n");
+    } else {
+        Serial.printf("[ERROR] ConfigManager: Failed to migrate NVS config to file\n");
+        Serial.printf("[ERROR] %s\n", fileManager.getLastError().c_str());
+    }
+#endif
+}
+
+bool ConfigManager::hasRequiredFields() {
+    // Required fields: wifi_ssid, wifi_password (can be empty for open networks), backend_url
+    // wifi_ssid must be non-empty
+    if (config.wifiSsid.length() == 0) {
+        return false;
+    }
+
+    // backend_url (apiEndpoint) must be non-empty
+    if (config.apiEndpoint.length() == 0) {
+        return false;
+    }
+
+    // wifi_password is required but can be empty string for open networks
+    // So we don't check its length
+
+    return true;
+}
+
+String ConfigManager::getMissingRequiredFields() {
+    String missing = "";
+
+    if (config.wifiSsid.length() == 0) {
+        if (missing.length() > 0)
+            missing += ", ";
+        missing += "wifi_ssid";
+    }
+
+    if (config.apiEndpoint.length() == 0) {
+        if (missing.length() > 0)
+            missing += ", ";
+        missing += "backend_url";
+    }
+
+    return missing;
+}
+
+void ConfigManager::setTouchDetected(bool detected, TouchControllerType type) {
+    touchDetected = detected;
+    touchType = type;
+
+#ifdef ARDUINO
+    if (detected) {
+        Serial.print("[INFO] Touch controller detected: ");
+        switch (type) {
+            case TouchControllerType::XPT2046:
+                Serial.println("XPT2046 (SPI)");
+                break;
+            case TouchControllerType::FT6236:
+                Serial.println("FT6236 (I2C)");
+                break;
+            case TouchControllerType::CST816:
+                Serial.println("CST816 (I2C)");
+                break;
+            case TouchControllerType::GT911:
+                Serial.println("GT911 (I2C)");
+                break;
+            default:
+                Serial.println("Unknown");
+                break;
+        }
+    } else {
+        Serial.println("[INFO] No touch controller detected");
+    }
+#endif
+}
+
+bool ConfigManager::isConfigPageEnabled() const {
+    return touchDetected;
+}
+
+void ConfigManager::enterProvisioningMode() {
+#ifdef ARDUINO
+    provisioningMode = true;
+    provisioningWifiSsid = "";
+    provisioningWifiPassword = "";
+    provisioningBackendUrl = "";
+
+    Serial.printf("\n========================================\n");
+    Serial.printf("=== PROVISIONING MODE ===\n");
+    Serial.printf("========================================\n");
+    Serial.printf("[INFO] ConfigManager: Entered provisioning mode\n");
+    Serial.printf("[INFO] Reason: Missing required configuration fields\n");
+
+    // Log which fields are missing
+    String missing = getMissingRequiredFields();
+    if (missing.length() > 0) {
+        Serial.printf("[INFO] Missing required fields: %s\n", missing.c_str());
+    }
+
+    Serial.printf("Device requires configuration.\n");
+    Serial.printf("Please provide the following required fields:\n");
+    Serial.printf("  1. WiFi SSID\n");
+    Serial.printf("  2. WiFi Password (can be empty for open networks)\n");
+    Serial.printf("  3. Backend URL\n");
+    Serial.printf("\n");
+    Serial.printf("Commands:\n");
+    Serial.printf("  provision_wifi <ssid> <password>\n");
+    Serial.printf("  provision_url <url>\n");
+    Serial.printf("  provision_save\n");
+    Serial.printf("  provision_cancel\n");
+    Serial.printf("  provision_status\n");
+    Serial.printf("========================================\n\n");
+#endif
+}
+
+void ConfigManager::handleProvisioningSerialInput() {
+#ifdef ARDUINO
+    if (!Serial.available()) {
+        return;
+    }
+
+    String command = Serial.readStringUntil('\n');
+    command.trim();
+
+    if (command.startsWith("provision_wifi ")) {
+        // Parse: provision_wifi <ssid> <password>
+        String params = command.substring(15);  // Skip "provision_wifi "
+        int spaceIndex = params.indexOf(' ');
+
+        if (spaceIndex > 0) {
+            provisioningWifiSsid = params.substring(0, spaceIndex);
+            provisioningWifiPassword = params.substring(spaceIndex + 1);
+            provisioningWifiPassword.trim();
+
+            Serial.print("WiFi SSID set to: ");
+            Serial.println(provisioningWifiSsid);
+            Serial.println("WiFi Password set");
+
+            // Validate
+            if (provisioningWifiSsid.length() == 0) {
+                Serial.println("[ERROR] WiFi SSID cannot be empty");
+            } else if (provisioningWifiSsid.length() > 128) {
+                Serial.println("[ERROR] WiFi SSID too long (max 128 characters)");
+            } else {
+                Serial.println("[OK] WiFi credentials validated");
+            }
+        } else {
+            Serial.println("[ERROR] Usage: provision_wifi <ssid> <password>");
+            Serial.println("Example: provision_wifi MyNetwork MyPassword123");
+            Serial.println("For open networks: provision_wifi MyNetwork \"\"");
+        }
+    } else if (command.startsWith("provision_url ")) {
+        // Parse: provision_url <url>
+        provisioningBackendUrl = command.substring(14);  // Skip "provision_url "
+        provisioningBackendUrl.trim();
+
+        Serial.print("Backend URL set to: ");
+        Serial.println(provisioningBackendUrl);
+
+        // Validate
+        if (provisioningBackendUrl.length() == 0) {
+            Serial.println("[ERROR] Backend URL cannot be empty");
+        } else if (!provisioningBackendUrl.startsWith("http://") &&
+                   !provisioningBackendUrl.startsWith("https://")) {
+            Serial.println("[ERROR] Backend URL must start with http:// or https://");
+        } else if (provisioningBackendUrl.length() > 128) {
+            Serial.println("[ERROR] Backend URL too long (max 128 characters)");
+        } else {
+            Serial.println("[OK] Backend URL validated");
+        }
+    } else if (command == "provision_status") {
+        Serial.println("\n=== Provisioning Status ===");
+        Serial.print("WiFi SSID: ");
+        Serial.println(provisioningWifiSsid.length() > 0 ? provisioningWifiSsid : "[NOT SET]");
+        Serial.print("WiFi Password: ");
+        Serial.println(provisioningWifiPassword.length() > 0 ? "[SET]" : "[NOT SET]");
+        Serial.print("Backend URL: ");
+        Serial.println(provisioningBackendUrl.length() > 0 ? provisioningBackendUrl : "[NOT SET]");
+        Serial.println("");
+
+        // Check if all required fields are set
+        bool allSet = (provisioningWifiSsid.length() > 0 && provisioningBackendUrl.length() > 0);
+        if (allSet) {
+            Serial.println("Status: Ready to save");
+        } else {
+            Serial.println("Status: Missing required fields");
+            if (provisioningWifiSsid.length() == 0) {
+                Serial.println("  - WiFi SSID required");
+            }
+            if (provisioningBackendUrl.length() == 0) {
+                Serial.println("  - Backend URL required");
+            }
+        }
+        Serial.println("===========================\n");
+    } else if (command == "provision_save") {
+        // Validate all required fields
+        bool valid = true;
+        String errors = "";
+
+        if (provisioningWifiSsid.length() == 0) {
+            valid = false;
+            errors += "  - WiFi SSID is required\n";
+        } else if (provisioningWifiSsid.length() > 128) {
+            valid = false;
+            errors += "  - WiFi SSID too long (max 128 characters)\n";
+        }
+
+        if (provisioningBackendUrl.length() == 0) {
+            valid = false;
+            errors += "  - Backend URL is required\n";
+        } else if (!provisioningBackendUrl.startsWith("http://") &&
+                   !provisioningBackendUrl.startsWith("https://")) {
+            valid = false;
+            errors += "  - Backend URL must start with http:// or https://\n";
+        } else if (provisioningBackendUrl.length() > 128) {
+            valid = false;
+            errors += "  - Backend URL too long (max 128 characters)\n";
+        }
+
+        if (!valid) {
+            Serial.println("[ERROR] Cannot save configuration:");
+            Serial.print(errors);
+            Serial.println("Use 'provision_status' to check current values");
+            Serial.printf("[ERROR] ConfigManager: Provisioning save failed - validation errors\n");
+            return;
+        }
+
+        Serial.printf(
+            "[INFO] ConfigManager: Provisioning validation passed, saving configuration\n");
+
+        // Apply provisioned values to config
+        config.wifiSsid = provisioningWifiSsid;
+        config.wifiPassword = provisioningWifiPassword;
+        config.apiEndpoint = provisioningBackendUrl;
+
+        // Save to both NVS and config file
+        bool nvsSuccess = saveConfig();
+        bool fileSuccess = false;
+
+        // Save to config file
+        ConfigFileData fileData = fileManager.getDefaults(config.deviceId);
+        fileData.wifiSsid = provisioningWifiSsid;
+        fileData.wifiPassword = provisioningWifiPassword;
+        fileData.backendUrl = provisioningBackendUrl;
+        fileData.friendlyName = config.deviceId;
+        fileData.displayBrightness = 128;
+        fileData.dataUploadInterval = 60;
+        fileData.sensorReadInterval = 10;
+        fileData.enableDeepSleep = false;
+
+        fileSuccess = fileManager.saveConfig(fileData);
+
+        if (nvsSuccess && fileSuccess) {
+            Serial.println("\n[SUCCESS] Configuration saved successfully!");
+            Serial.printf(
+                "[INFO] ConfigManager: Provisioning complete - configuration saved to NVS and "
+                "file\n");
+            Serial.printf("[INFO] ConfigManager: Rebooting device in 3 seconds...\n");
+            Serial.println("Rebooting in 3 seconds...");
+            delay(3000);
+            ESP.restart();
+        } else {
+            Serial.println("\n[ERROR] Failed to save configuration:");
+            Serial.printf("[ERROR] ConfigManager: Provisioning save failed\n");
+            if (!nvsSuccess) {
+                Serial.println("  - NVS save failed");
+                Serial.printf("[ERROR]   - NVS save failed\n");
+            }
+            if (!fileSuccess) {
+                Serial.println("  - Config file save failed");
+                Serial.print("  - Error: ");
+                Serial.println(fileManager.getLastError());
+                Serial.printf("[ERROR]   - Config file save failed: %s\n",
+                              fileManager.getLastError().c_str());
+            }
+        }
+    } else if (command == "provision_cancel") {
+        Serial.println("Provisioning cancelled. Returning to normal mode.");
+        Serial.println("Note: Device is not fully configured and may not function properly.");
+        Serial.printf("[WARN] ConfigManager: Provisioning cancelled by user\n");
+        provisioningMode = false;
+    } else if (command == "help" || command == "?") {
+        Serial.println("\n=== Provisioning Commands ===");
+        Serial.println("provision_wifi <ssid> <password> - Set WiFi credentials");
+        Serial.println("provision_url <url>              - Set backend URL");
+        Serial.println("provision_status                 - Show current values");
+        Serial.println("provision_save                   - Save and reboot");
+        Serial.println("provision_cancel                 - Cancel provisioning");
+        Serial.println("help or ?                        - Show this help");
+        Serial.println("============================\n");
+    } else {
+        Serial.println("[ERROR] Unknown command. Type 'help' for available commands.");
+    }
+#endif
+}
+
+bool ConfigManager::isInProvisioningMode() const {
+    return provisioningMode;
 }

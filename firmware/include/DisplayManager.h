@@ -12,6 +12,8 @@
 #include <TFT_eSPI.h>
 #endif
 
+#include "ConfigFileManager.h"
+#include "TouchDetector.h"
 #include "models/Config.h"
 #include "models/DisplayPage.h"
 #include "models/DisplayPoint.h"
@@ -45,6 +47,16 @@ class DisplayManager {
     void disableDisplay();
     void enableDisplay();
 
+    // Touch enable/disable
+    void setTouchEnabled(bool enabled, TouchControllerType type);
+
+    // Config error display
+    void showConfigError(ConfigLoadResult errorType);
+    void showConfigValidationError(const std::string& missingFields);
+
+    // Provisioning mode display
+    void showProvisioningMode(const std::string& instructions);
+
     DisplayPage getCurrentPage() const { return currentPage; }
     bool isInitialized() const { return initialized; }
 
@@ -63,6 +75,8 @@ class DisplayManager {
     uint8_t backlightBrightness;
     uint16_t screenWidth;
     uint16_t screenHeight;
+    bool touchEnabled;
+    TouchControllerType touchType;
 
     void renderSummaryPage(const SensorReadings& current, const SystemStatus& status,
                            const Config* config = nullptr);
@@ -95,6 +109,9 @@ class DisplayManager {
 
     std::string formatUptime(unsigned long uptimeMs);
     std::string formatFloat(float value, uint8_t decimals);
+
+    // Touch driver initialization (conditional)
+    bool initializeTouchDriver();
 };
 
 #endif  // DISPLAY_MANAGER_H

@@ -34,9 +34,20 @@ When the ESP32 boots, you'll see output similar to:
 ESP32 Sensor Firmware v1.0.0
 ===========================================
 [INIT] Initializing ConfigManager...
-[INIT] Configuration loaded from NVS
+[INIT] Mounting LittleFS filesystem...
+[INIT] LittleFS mounted successfully
+[INIT] Loading configuration from file...
+[CONFIG] Configuration loaded from /config.json
+[INIT] Configuration loaded successfully
 [INIT] Initializing DisplayManager...
 [INIT] Display initialized successfully
+[TOUCH] Starting touch detection...
+[TOUCH] Probing XPT2046 (SPI)...
+[TOUCH] XPT2046 not detected
+[TOUCH] Probing FT6236 (I2C 0x38)...
+[TOUCH] FT6236 detected successfully
+[TOUCH] Touch detection complete: FT6236 (250ms)
+[CONFIG] Touch-based config page enabled
 [INIT] Initializing SensorManager...
 [INIT] BME280 sensor initialized
 [INIT] DS18B20 sensor initialized
@@ -46,6 +57,25 @@ ESP32 Sensor Firmware v1.0.0
 [WIFI] Connected! IP: 192.168.1.100
 [INIT] Initialization complete
 ===========================================
+
+Type 'help' for configuration menu
+```
+
+**Note:** If configuration file is missing or invalid, you'll see:
+```
+[CONFIG] Config file not found, trying NVS...
+[CONFIG] Configuration loaded from NVS
+```
+
+**Note:** If required fields are missing, you'll see:
+```
+[CONFIG] Required fields missing: wifi_ssid, backend_url
+[CONFIG] Entering provisioning mode
+===========================================
+PROVISIONING MODE
+===========================================
+Required configuration fields are missing.
+Please configure via serial console.
 
 Type 'help' for configuration menu
 ```
@@ -481,6 +511,196 @@ The firmware continuously outputs sensor readings to serial console:
 5. Verify WiFi connection
 6. Monitor continuous output for errors
 
+### Provisioning Mode Workflow
+
+Provisioning mode is entered automatically when required configuration fields are missing. This typically occurs on:
+- First boot of new device
+- After factory reset
+- When config file is corrupt or missing required fields
+- When NVS storage is empty or invalid
+
+**Entry Conditions:**
+- Missing `wifi_ssid`
+- Missing `wifi_password` (must be present, can be empty string)
+- Missing `backend_url`
+- Any combination of the above
+
+**Provisioning Mode Indicators:**
+1. **Serial Console:**
+   ```
+   ===========================================
+   PROVISIONING MODE
+   ===========================================
+   Required configuration fields are missing.
+   Please configure via serial console.
+
+   Missing fields: wifi_ssid, backend_url
+
+   Type 'help' for configuration menu
+   ```
+
+2. **TFT Display:**
+   - Shows "Provisioning Mode" message
+   - Lists missing required fields
+   - Instructions: "Use Serial Console" or "Use Touch Interface" (if touch detected)
+
+**Provisioning Steps:**
+
+1. **Connect to serial console** (115200 baud)
+
+2. **Configure required fields:**
+   ```
+   > wifi
+   Enter WiFi SSID: MyNetwork
+   Enter WiFi Password: MyPassword123
+   WiFi credentials updated
+
+   > api
+   Enter API Endpoint URL: https://api.example.com/sensors
+   Enter API Token: my-token-12345
+   API configuration updated
+   ```
+
+3. **Optionally configure other settings:**
+   ```
+   > deviceid
+   Enter Device ID: sensor-01
+   Device ID updated
+
+   > intervals
+   [Configure as needed]
+   ```
+
+4. **Save configuration:**
+   ```
+   > save
+   Configuration saved successfully
+   Saving to NVS...
+   Saving to config file...
+   Configuration saved to both NVS and /config.json
+   ```
+
+5. **Automatic reboot:**
+   ```
+   Rebooting in 3 seconds...
+   ```
+   Device automatically reboots after successful provisioning
+
+6. **Verify normal operation:**
+   - Watch boot sequence
+   - Confirm "Configuration loaded" message
+   - Verify WiFi connection
+   - Check sensors reading
+
+**Validation During Provisioning:**
+
+The firmware validates all fields as you enter them:
+
+**WiFi SSID:**
+- Must be 1-32 characters
+- Cannot be empty
+
+**WiFi Password:**
+- Must be 0 characters (open network) or 8-63 characters
+- Can be empty string for open networks
+
+**Backend URL:**
+- Must start with `http://` or `https://`
+- Maximum 128 characters
+- Must be valid URL format
+
+**Invalid Input Example:**
+```
+> api
+Enter API Endpoint URL: invalid-url
+Error: URL must start with http:// or https://
+API configuration NOT updated
+```
+
+**Exiting Provisioning Mode:**
+
+Provisioning mode can only be exited by:
+1. Providing all required fields
+2. Saving configuration successfully
+3. Automatic reboot
+
+**Cannot exit provisioning mode by:**
+- Manual reboot (will re-enter provisioning mode)
+- Power cycle (will re-enter provisioning mode)
+- Resetting to defaults without providing required fields
+
+**Provisioning with Config File:**
+
+If you prefer to use a config file instead of serial console:
+
+1. **Create config.json** with required fields:
+   ```json
+   {
+     "schema_version": 1,
+     "checksum": "CALCULATE_ME",
+     "wifi_ssid": "MyNetwork",
+     "wifi_password": "MyPassword123",
+     "backend_url": "https://api.example.com/sensors"
+   }
+   ```
+
+2. **Calculate checksum** (see [CONFIG_FILE_EXAMPLE.md](CONFIG_FILE_EXAMPLE.md))
+
+3. **Upload to filesystem:**
+   ```bash
+   pio run -e esp32dev --target uploadfs
+   ```
+
+4. **Reboot device** - will load from config file and exit provisioning mode
+
+**Provisioning with Touch Interface (if available):**
+
+If touch screen is detected during provisioning mode:
+
+1. **Touch interface enabled** for configuration
+2. **On-screen forms** for entering required fields
+3. **Validation feedback** shown immediately
+4. **Save button** writes to both NVS and config file
+5. **Automatic reboot** after successful save
+
+**Troubleshooting Provisioning Mode:**
+
+**Stuck in Provisioning Mode:**
+
+Problem: Device keeps entering provisioning mode after reboot
+
+Solutions:
+1. Verify all required fields entered:
+   ```
+   > show
+   ```
+2. Check for validation errors in serial output
+3. Ensure `save` command executed successfully
+4. Verify config file has correct format (if using file method)
+5. Check NVS partition not corrupted
+
+**Save Command Fails:**
+
+Problem: `save` command returns error
+
+Solutions:
+1. Check field validation errors
+2. Verify NVS partition accessible
+3. Check LittleFS filesystem mounted
+4. Review serial output for specific error
+5. Try `defaults` then reconfigure
+
+**Config File Not Loading:**
+
+Problem: Config file present but provisioning mode still entered
+
+Solutions:
+1. Verify all required fields in config file
+2. Check checksum is valid
+3. Verify JSON syntax correct
+4. Check file location is `/config.json` (root of LittleFS)
+5. Review serial output for parse errors
+
 ## Advanced Configuration
 
 ### Adjusting for Battery Operation
@@ -630,12 +850,34 @@ API configuration updated
 | `intervals` | Update timing intervals | Yes |
 | `calibrate` | Calibrate soil moisture sensor | Yes |
 | `deviceid` | Update device identifier | Yes |
-| `save` | Save configuration to NVS | No |
+| `save` | Save configuration to NVS and config file | No |
 | `defaults` | Reset to default configuration | No |
 | `diag` | Show system diagnostics | No |
 | `help` | Show configuration menu | No |
 
 **Interactive:** Commands that prompt for additional input
+
+**Note:** The `save` command now saves to both NVS storage and `/config.json` file (if LittleFS is mounted). This ensures configuration persists and is available via both methods.
+
+## Configuration Sources
+
+The firmware supports multiple configuration sources with the following priority:
+
+1. **Config File** (`/config.json` on LittleFS)
+   - Loaded first if present and valid
+   - See [CONFIG_FILE_EXAMPLE.md](CONFIG_FILE_EXAMPLE.md)
+   - Recommended for automated deployments
+
+2. **NVS Storage** (Non-Volatile Storage)
+   - Used if config file missing or invalid
+   - Traditional serial console configuration
+   - Automatically migrated to config file on first boot
+
+3. **Defaults**
+   - Applied to optional fields only
+   - Never used for required fields (wifi_ssid, wifi_password, backend_url)
+
+**Provisioning Mode:** If required fields are missing from all sources, device enters provisioning mode and requires configuration before normal operation.
 
 ## Next Steps
 
@@ -645,6 +887,8 @@ After configuration:
 3. Confirm WiFi connection established
 4. Monitor first data transmission
 5. Review API server receives data correctly
+
+For configuration file format and examples, see [CONFIG_FILE_EXAMPLE.md](CONFIG_FILE_EXAMPLE.md)
 
 For detailed calibration procedures, see [CALIBRATION.md](CALIBRATION.md)
 

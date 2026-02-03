@@ -24,6 +24,7 @@ This comprehensive checklist guides you through deploying the ESP32 sensor firmw
   - Startup screen visible
   - All display pages render correctly
   - Backlight control working (GPIO27)
+  - Touch screen detected (if applicable) - see Touch Detection section below
 
 - [ ] **Power supply adequate**
   - 5V 1A minimum for USB power
@@ -49,11 +50,17 @@ This comprehensive checklist guides you through deploying the ESP32 sensor firmw
   - Serial output shows startup messages
   - No error messages during boot
   - All managers initialize successfully
+  - Touch detection completes (if touch screen present)
 
 - [ ] **Configuration defaults reviewed**
   - Default intervals appropriate
   - Default device ID unique
   - Default API endpoint placeholder present
+
+- [ ] **Configuration method selected**
+  - Config file prepared (recommended) - see [CONFIG_FILE_EXAMPLE.md](CONFIG_FILE_EXAMPLE.md)
+  - Or serial console configuration planned
+  - Touch-based configuration available (if touch screen detected)
 
 ### Network Preparation
 
@@ -74,7 +81,233 @@ This comprehensive checklist guides you through deploying the ESP32 sensor firmw
   - Or outbound HTTP (port 80) for development
   - DNS resolution working
 
+## Touch Screen Detection
+
+### Overview
+
+The firmware automatically detects touch screen capability at boot time. This determines whether the touch-based configuration interface is available.
+
+### Supported Touch Controllers
+
+The firmware supports the following touch controllers:
+
+**SPI Controllers (Priority 1):**
+- **XPT2046** - Resistive touch controller
+  - Common in budget TFT displays
+  - 4-wire resistive touch
+  - SPI interface
+
+**I2C Controllers (Priority 2):**
+- **FT6236** - Capacitive touch controller (I2C address 0x38)
+- **CST816** - Capacitive touch controller (I2C address 0x15)
+- **GT911** - Capacitive touch controller (I2C addresses 0x5D or 0x14)
+
+### Detection Process
+
+**Boot Sequence:**
+1. Display initializes first
+2. Touch detection begins (max 500ms total)
+3. SPI controllers probed first (XPT2046)
+4. I2C controllers probed second (FT6236, CST816, GT911)
+5. Each probe has 150ms timeout
+6. Requires 2 consecutive successful reads for positive detection
+7. Detection result logged to serial console
+
+**Serial Output Example:**
+```
+[TOUCH] Starting touch detection...
+[TOUCH] Probing XPT2046 (SPI)...
+[TOUCH] XPT2046 not detected
+[TOUCH] Probing FT6236 (I2C 0x38)...
+[TOUCH] FT6236 detected successfully
+[TOUCH] Verifying stability...
+[TOUCH] Touch detection complete: FT6236 (250ms)
+```
+
+### Detection Timing
+
+- **Per-probe timeout:** 150ms maximum
+- **Total detection timeout:** 500ms maximum
+- **Stability verification:** 2 consecutive reads (10ms apart)
+- **Typical detection time:** 100-300ms
+
+### Behavior Based on Detection
+
+**Touch Screen Detected:**
+- Touch-based configuration page enabled
+- Touch driver initialized
+- Touch polling task started (50ms interval)
+- Touch IRQ handlers attached
+- User can configure via touch interface
+- Serial console still available
+
+**No Touch Screen Detected:**
+- Touch-based configuration page disabled
+- No touch driver initialization (saves ~8KB RAM)
+- No touch polling task
+- No touch IRQ handlers
+- Configuration via serial console or config file only
+- Normal operation otherwise unaffected
+
+### Verification
+
+**Check Touch Detection Status:**
+1. Connect to serial console during boot
+2. Look for touch detection messages
+3. Verify detection result matches hardware
+
+**Expected Output (Touch Detected):**
+```
+[TOUCH] Touch detection complete: FT6236 (250ms)
+[CONFIG] Touch-based config page enabled
+```
+
+**Expected Output (No Touch):**
+```
+[TOUCH] Touch detection complete: NONE (500ms)
+[CONFIG] Touch-based config page disabled
+```
+
+### Troubleshooting Touch Detection
+
+**Touch Screen Not Detected:**
+
+Symptoms:
+- Serial output shows "NONE" for touch detection
+- Touch interface not available
+- Device works but no touch response
+
+Solutions:
+1. **Verify touch controller wiring:**
+   - SPI: Check CS, MOSI, MISO, SCK pins
+   - I2C: Check SDA, SCL pins and pull-up resistors (4.7kΩ)
+
+2. **Check touch controller power:**
+   - Verify 3.3V supply to touch controller
+   - Check ground connection
+
+3. **Verify touch controller type:**
+   - Confirm which controller your display uses
+   - Check display datasheet or markings
+
+4. **Check I2C address:**
+   - Some controllers have configurable addresses
+   - GT911 can be 0x5D or 0x14 depending on INT/RST pins
+
+5. **Test I2C bus:**
+   - Use I2C scanner sketch to detect devices
+   - Verify touch controller appears at expected address
+
+6. **Review serial output:**
+   - Check for specific error messages
+   - Note which probes were attempted
+   - Check if timeout occurred
+
+**False Detection:**
+
+Symptoms:
+- Touch detected but not actually present
+- Touch interface enabled but non-functional
+
+Solutions:
+1. Check for I2C address conflicts
+2. Verify no other devices on same I2C address
+3. Review detection logs for stability verification
+
+**Detection Timeout:**
+
+Symptoms:
+- Detection takes full 500ms
+- Multiple probe attempts
+
+Solutions:
+1. Normal if no touch screen present
+2. Check I2C bus for slow devices
+3. Verify pull-up resistors on I2C lines
+
+### Configuration Methods by Hardware
+
+**With Touch Screen:**
+1. **Config file** (recommended) - See [CONFIG_FILE_EXAMPLE.md](CONFIG_FILE_EXAMPLE.md)
+2. **Touch interface** - Interactive on-screen configuration
+3. **Serial console** - Traditional command-line configuration
+
+**Without Touch Screen:**
+1. **Config file** (recommended) - See [CONFIG_FILE_EXAMPLE.md](CONFIG_FILE_EXAMPLE.md)
+2. **Serial console** - Command-line configuration
+
+### Resource Usage
+
+**Touch Enabled:**
+- Touch driver: ~8KB RAM
+- Touch polling task: ~2KB RAM
+- Total additional: ~10KB RAM
+
+**Touch Disabled:**
+- No touch driver allocation
+- No polling task
+- Saves ~10KB RAM for other uses
+
 ## Initial Configuration
+
+### Configuration Method Selection
+
+Choose one of the following configuration methods:
+
+**Method 1: Configuration File (Recommended)**
+- Create `/config.json` on LittleFS filesystem
+- Upload before first boot
+- See [CONFIG_FILE_EXAMPLE.md](CONFIG_FILE_EXAMPLE.md) for format
+- Advantages: Automated deployment, version control, no manual entry
+
+**Method 2: Serial Console**
+- Interactive command-line configuration
+- Available on all devices
+- See steps below
+
+**Method 3: Touch Interface (if touch screen detected)**
+- On-screen configuration
+- Only available if touch controller detected
+- Intuitive graphical interface
+
+### Method 1: Configuration File Setup
+
+If using configuration file method:
+
+1. **Create config.json:**
+   ```json
+   {
+     "schema_version": 1,
+     "checksum": "CALCULATE_ME",
+     "wifi_ssid": "YourNetwork",
+     "wifi_password": "YourPassword",
+     "backend_url": "https://api.example.com/sensors",
+     "friendly_name": "My Sensor",
+     "display_brightness": 200,
+     "data_upload_interval": 300,
+     "sensor_read_interval": 30,
+     "enable_deep_sleep": false
+   }
+   ```
+
+2. **Calculate checksum:**
+   - Use provided Python script in [CONFIG_FILE_EXAMPLE.md](CONFIG_FILE_EXAMPLE.md)
+   - Update checksum field with calculated value
+
+3. **Upload to filesystem:**
+   ```bash
+   # Place config.json in firmware/data/ folder
+   pio run -e esp32dev --target uploadfs
+   ```
+
+4. **Verify on boot:**
+   - Connect to serial console
+   - Check for "Config loaded from file" message
+   - Verify no error messages
+
+5. **Skip to Sensor Calibration section**
+
+### Method 2: Serial Console Configuration
 
 ### Step 1: Connect to Serial Console
 

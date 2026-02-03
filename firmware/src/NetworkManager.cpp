@@ -1,5 +1,6 @@
 #include "NetworkManager.h"
 
+#include "BootId.h"
 #include "models/SensorType.h"
 
 #ifndef UNIT_TEST
@@ -676,4 +677,243 @@ unsigned long NetworkManager::calculateBackoffDelay(uint8_t attempt) {
     if (attempt >= 5)
         return 16000;
     return 1000 * (1 << attempt);  // 2^attempt seconds in milliseconds
+}
+
+String NetworkManager::getRegistrationEndpoint() {
+    Config cfg = config.getConfig();
+    return deriveEndpoint(String(cfg.apiEndpoint));
+}
+
+String NetworkManager::deriveEndpoint(const String& dataEndpoint) {
+    String endpoint = dataEndpoint;
+
+    // Strip trailing slashes
+    while (endpoint.endsWith("/")) {
+        endpoint = endpoint.substring(0, endpoint.length() - 1);
+    }
+
+    // Remove query string and fragment at earliest occurrence
+    int queryPos = endpoint.indexOf('?');
+    int fragmentPos = endpoint.indexOf('#');
+    int cutPos = -1;
+
+    if (queryPos != -1 && fragmentPos != -1) {
+        cutPos = min(queryPos, fragmentPos);
+    } else if (queryPos != -1) {
+        cutPos = queryPos;
+    } else if (fragmentPos != -1) {
+        cutPos = fragmentPos;
+    }
+
+    if (cutPos != -1) {
+        endpoint = endpoint.substring(0, cutPos);
+    }
+
+    // Find the last '/' in the path
+    int lastSlash = endpoint.lastIndexOf('/');
+
+    if (lastSlash == -1) {
+        // No path, append /register
+        return endpoint + "/register";
+    }
+
+    // Check if last slash is part of protocol (http://)
+    if (lastSlash < 8) {
+        // No path after domain, append /register
+        return endpoint + "/register";
+    }
+
+    // Replace last segment with "register"
+    return endpoint.substring(0, lastSlash + 1) + "register";
+}
+
+RegistrationResult NetworkManager::registerDevice(const String& payload) {
+    RegistrationResult result;
+    result.statusCode = 0;
+    result.confirmationId = "";
+    result.shouldRetry = false;
+
+    if (!isConnected()) {
+        Serial.printf("[NetworkManager] Cannot register: WiFi not connected\n");
+        result.shouldRetry = true;  // Network error - should retry
+        return result;
+    }
+
+    Config cfg = config.getConfig();
+
+    // Validate API endpoint
+    if (strlen(cfg.apiEndpoint) == 0) {
+        Serial.printf("[NetworkManager] ERROR: API endpoint not configured\n");
+        return result;  // Configuration error - don't retry
+    }
+
+    // Get registration endpoint
+    String registrationEndpoint = getRegistrationEndpoint();
+
+    Serial.printf("[NetworkManager] Registering device at: %s\n", registrationEndpoint.c_str());
+    Serial.printf("[NetworkManager] Payload size: %d bytes\n", payload.length());
+
+    // Determine if endpoint is HTTPS
+    bool useHttps = registrationEndpoint.startsWith("https://");
+
+    if (useHttps) {
+        Serial.printf("[NetworkManager] Using HTTPS with TLS\n");
+    } else {
+        Serial.printf("[NetworkManager] Using plain HTTP\n");
+    }
+
+    // Feed watchdog before HTTP attempt
+#ifndef UNIT_TEST
+    esp_task_wdt_reset();
+#endif
+
+    // Initialize HTTP client with appropriate transport
+    if (useHttps) {
+        // Configure WiFiClientSecure for HTTPS
+        if (cfg.tlsValidateServer) {
+            Serial.printf("[NetworkManager] TLS: Certificate validation enabled\n");
+            wifiClient.setCACert(NULL);  // Use built-in root CA bundle
+        } else {
+            Serial.printf("[NetworkManager] TLS: Certificate validation DISABLED (insecure)\n");
+            wifiClient.setInsecure();
+        }
+
+        httpClient.begin(wifiClient, registrationEndpoint);
+    } else {
+        // Use plain HTTP
+        httpClient.begin(registrationEndpoint);
+    }
+
+    // Set headers
+    httpClient.addHeader("Content-Type", "application/json");
+
+    // Add X-API-Key header if configured
+    if (strlen(cfg.apiToken) > 0) {
+        httpClient.addHeader("X-API-Key", String(cfg.apiToken));
+    }
+
+    // Set timeout to 10 seconds for registration
+    httpClient.setTimeout(10000);
+
+    // Send POST request
+    int httpCode = httpClient.POST(payload);
+
+    result.statusCode = httpCode;
+
+    // Check response
+    if (httpCode > 0) {
+        Serial.printf("[NetworkManager] Registration HTTP Response code: %d\n", httpCode);
+
+        // Determine if we should retry based on status code BEFORE parsing response
+        // Retry on: network errors, 408, 429, or 5xx
+        if (httpCode == 408 || httpCode == 429 || (httpCode >= 500 && httpCode <= 599)) {
+            result.shouldRetry = true;
+        }
+
+        if (httpCode == 200 || httpCode == 201) {
+            // Success - try to parse response
+            String response = httpClient.getString();
+
+            if (parseRegistrationResponse(response, result.confirmationId)) {
+                Serial.printf("[NetworkManager] Registration successful. Confirmation ID: %s\n",
+                              result.confirmationId.c_str());
+            } else {
+                Serial.printf("[NetworkManager] Registration response parsing failed\n");
+                // Don't retry if we got 200 but couldn't parse - likely a server issue
+            }
+        } else if (httpCode >= 400 && httpCode < 500) {
+            // Client error (4xx) - log and potentially retry based on shouldRetry flag
+            Serial.printf("[NetworkManager] Registration client error (4xx): %d\n", httpCode);
+            String response = httpClient.getString();
+            Serial.printf("[NetworkManager] Response: %s\n", response.c_str());
+
+            statusManager.incrementNetworkFailures();
+            statusManager.setLastError("Registration HTTP " + String(httpCode));
+        } else if (httpCode >= 500) {
+            // Server error (5xx) - retry with backoff
+            Serial.printf("[NetworkManager] Registration server error (5xx): %d\n", httpCode);
+
+            statusManager.incrementNetworkFailures();
+            statusManager.setLastError("Registration HTTP " + String(httpCode));
+        }
+    } else {
+        // HTTP request failed - network error, should retry
+        result.shouldRetry = true;
+
+        String errorMsg = httpClient.errorToString(httpCode);
+        Serial.printf("[NetworkManager] Registration HTTP request failed: %s\n", errorMsg.c_str());
+
+        // Check for TLS-specific errors
+        if (useHttps) {
+            if (httpCode == HTTPC_ERROR_CONNECTION_FAILED) {
+                Serial.printf("[NetworkManager] TLS: Connection failed during registration\n");
+                statusManager.setLastError("Registration TLS connection failed");
+            } else if (httpCode == HTTPC_ERROR_READ_TIMEOUT) {
+                Serial.printf("[NetworkManager] TLS: Read timeout during registration\n");
+                statusManager.setLastError("Registration TLS timeout");
+            } else {
+                statusManager.setLastError("Registration TLS error: " + errorMsg);
+            }
+        } else {
+            statusManager.setLastError("Registration HTTP error: " + errorMsg);
+        }
+
+        statusManager.incrementNetworkFailures();
+    }
+
+    httpClient.end();
+
+    return result;
+}
+
+bool NetworkManager::parseRegistrationResponse(const String& response, String& confirmationId) {
+    confirmationId = "";
+
+    if (response.length() == 0) {
+        Serial.printf("[NetworkManager] Empty registration response\n");
+        return false;
+    }
+
+    // Look for "confirmation_id" field in JSON response
+    int fieldStart = response.indexOf("\"confirmation_id\"");
+    if (fieldStart == -1) {
+        Serial.printf("[NetworkManager] Missing confirmation_id field in response\n");
+        return false;
+    }
+
+    // Find the colon after the field name
+    int colonPos = response.indexOf(':', fieldStart);
+    if (colonPos == -1) {
+        Serial.printf("[NetworkManager] Malformed JSON: missing colon after confirmation_id\n");
+        return false;
+    }
+
+    // Find the opening quote of the value
+    int quoteStart = response.indexOf('"', colonPos);
+    if (quoteStart == -1) {
+        Serial.printf(
+            "[NetworkManager] Malformed JSON: missing opening quote for confirmation_id value\n");
+        return false;
+    }
+
+    // Find the closing quote of the value
+    int quoteEnd = response.indexOf('"', quoteStart + 1);
+    if (quoteEnd == -1) {
+        Serial.printf(
+            "[NetworkManager] Malformed JSON: missing closing quote for confirmation_id value\n");
+        return false;
+    }
+
+    // Extract confirmation_id
+    String extractedId = response.substring(quoteStart + 1, quoteEnd);
+
+    // Validate as UUID v4 using BootId utility
+    if (!BootId::isValidUuid(extractedId)) {
+        Serial.printf("[NetworkManager] Invalid confirmation_id format (not UUID v4): %s\n",
+                      extractedId.c_str());
+        return false;
+    }
+
+    confirmationId = extractedId;
+    return true;
 }

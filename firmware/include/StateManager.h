@@ -5,6 +5,15 @@
 #include "models/DisplayPoint.h"
 #include <cstdint>
 
+/**
+ * System operational states
+ */
+enum class SystemState {
+    NORMAL,        // Normal operation
+    PROVISIONING,  // Provisioning mode (awaiting configuration)
+    ERROR          // Critical error state
+};
+
 #ifdef ARDUINO
 #include <Preferences.h>
 #else
@@ -24,12 +33,20 @@ class Preferences {
 /**
  * StateManager handles persistence of critical system state to NVS
  * for recovery after deep sleep or unexpected resets.
+ * Also manages system operational state (normal, provisioning, error).
  */
 class StateManager {
    public:
     StateManager();
 
     void initialize();
+
+    // System state management
+    void enterProvisioningMode();
+    void exitProvisioningMode();
+    bool isInProvisioningMode() const;
+    SystemState getCurrentState() const;
+    void setSystemState(SystemState state);
 
     // Persist critical state before deep sleep
     bool persistState(const AveragedData* dataBuffer, uint16_t dataBufferCount,
@@ -47,6 +64,7 @@ class StateManager {
 
    private:
     Preferences nvs;
+    SystemState currentState;
 
     // NVS namespace for state persistence
     static constexpr const char* NVS_NAMESPACE = "state";

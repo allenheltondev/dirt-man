@@ -28,7 +28,9 @@ DisplayManager::DisplayManager()
       displayEnabled(true),
       backlightBrightness(255),
       screenWidth(0),
-      screenHeight(0) {}
+      screenHeight(0),
+      touchEnabled(false),
+      touchType(TouchControllerType::NONE) {}
 
 DisplayManager::~DisplayManager() {}
 
@@ -847,5 +849,208 @@ void DisplayManager::enableDisplay() {
     } else {
         setBacklightBrightness(255);
     }
+#endif
+}
+
+void DisplayManager::setTouchEnabled(bool enabled, TouchControllerType type) {
+    touchEnabled = enabled;
+    touchType = type;
+
+    if (touchEnabled) {
+        // Initialize touch driver only if enabled
+        initializeTouchDriver();
+    }
+    // If disabled, touch driver resources are not allocated
+    // Touch polling task is not created
+    // Touch IRQ handlers are not attached
+}
+
+bool DisplayManager::initializeTouchDriver() {
+    // Only initialize if touch is enabled
+    if (!touchEnabled) {
+        return false;
+    }
+
+#ifndef UNIT_TEST
+    // Initialize touch driver based on detected controller type
+    // This is a placeholder for actual touch driver initialization
+    // The actual implementation would depend on the specific touch library used
+
+    switch (touchType) {
+        case TouchControllerType::XPT2046:
+            // Initialize XPT2046 SPI touch driver
+            // Example: touchDriver = new XPT2046_Touchscreen(CS_PIN);
+            // touchDriver->begin();
+            break;
+
+        case TouchControllerType::FT6236:
+            // Initialize FT6236 I2C touch driver
+            // Example: touchDriver = new FT6236(I2C_ADDRESS);
+            // touchDriver->begin();
+            break;
+
+        case TouchControllerType::CST816:
+            // Initialize CST816 I2C touch driver
+            // Example: touchDriver = new CST816(I2C_ADDRESS);
+            // touchDriver->begin();
+            break;
+
+        case TouchControllerType::GT911:
+            // Initialize GT911 I2C touch driver
+            // Example: touchDriver = new GT911(I2C_ADDRESS);
+            // touchDriver->begin();
+            break;
+
+        case TouchControllerType::NONE:
+        default:
+            return false;
+    }
+
+    // Note: Touch polling task creation would happen here if needed
+    // Note: Touch IRQ handler attachment would happen here if needed
+    // These are skipped when touchEnabled is false
+
+    return true;
+#else
+    return true;  // Mock success in unit tests
+#endif
+}
+
+void DisplayManager::showConfigError(ConfigLoadResult errorType) {
+    if (!initialized) {
+        return;
+    }
+
+#ifndef UNIT_TEST
+    std::string message;
+    switch (errorType) {
+        case ConfigLoadResult::FILE_NOT_FOUND:
+            message = "Config: file missing";
+            break;
+        case ConfigLoadResult::PARSE_ERROR:
+            message = "Config: parse error";
+            break;
+        case ConfigLoadResult::SCHEMA_ERROR:
+            message = "Config: schema error";
+            break;
+        case ConfigLoadResult::CHECKSUM_ERROR:
+            message = "Config: checksum error";
+            break;
+        case ConfigLoadResult::FS_MOUNT_ERROR:
+            message = "Config: FS mount failed";
+            break;
+        case ConfigLoadResult::READ_ERROR:
+            message = "Config: read error";
+            break;
+        case ConfigLoadResult::WRITE_ERROR:
+            message = "Config: write error";
+            break;
+        case ConfigLoadResult::SUCCESS:
+            // No error to display
+            return;
+    }
+
+    // Display one-line message at bottom of screen in yellow
+    drawText(5, screenHeight - 16, message, COLOR_YELLOW, 1);
+#else
+    (void)errorType;
+#endif
+}
+
+void DisplayManager::showConfigValidationError(const std::string& missingFields) {
+    if (!initialized) {
+        return;
+    }
+
+#ifndef UNIT_TEST
+    std::string message = "Config: missing required";
+
+    // Display one-line message at bottom of screen in yellow
+    drawText(5, screenHeight - 16, message, COLOR_YELLOW, 1);
+
+    // Optionally display the missing fields on the next line if there's space
+    if (!missingFields.empty() && screenHeight > 32) {
+        std::string fieldsMsg = "Fields: " + missingFields;
+        // Truncate if too long
+        if (fieldsMsg.length() > 40) {
+            fieldsMsg = fieldsMsg.substr(0, 37) + "...";
+        }
+        drawText(5, screenHeight - 4, fieldsMsg, COLOR_YELLOW, 1);
+    }
+#else
+    (void)missingFields;
+#endif
+}
+
+void DisplayManager::showProvisioningMode(const std::string& instructions) {
+    if (!initialized) {
+        return;
+    }
+
+#ifndef UNIT_TEST
+    // Clear screen
+    tft.fillScreen(COLOR_BLACK);
+
+    // Draw title
+    drawCenteredText(20, "PROVISIONING MODE", COLOR_YELLOW, 2);
+
+    // Draw horizontal line
+    tft.drawLine(10, 45, screenWidth - 10, 45, COLOR_YELLOW);
+
+    // Draw main message
+    drawCenteredText(60, "Device Configuration", COLOR_WHITE, 1);
+    drawCenteredText(75, "Required", COLOR_WHITE, 1);
+
+    // Draw instructions
+    int16_t yPos = 100;
+    drawText(10, yPos, "Use serial console to", COLOR_LIGHT_GRAY, 1);
+    yPos += 15;
+    drawText(10, yPos, "configure device:", COLOR_LIGHT_GRAY, 1);
+    yPos += 25;
+
+    // Draw command examples
+    drawText(15, yPos, "provision_wifi", COLOR_CYAN, 1);
+    yPos += 15;
+    drawText(15, yPos, "provision_url", COLOR_CYAN, 1);
+    yPos += 15;
+    drawText(15, yPos, "provision_save", COLOR_CYAN, 1);
+    yPos += 25;
+
+    // Draw additional instructions if provided
+    if (!instructions.empty()) {
+        // Word wrap the instructions
+        std::string remaining = instructions;
+        while (!remaining.empty() && yPos < screenHeight - 30) {
+            size_t maxLen = 35;  // Approximate characters per line
+            std::string line;
+
+            if (remaining.length() <= maxLen) {
+                line = remaining;
+                remaining = "";
+            } else {
+                // Find last space before maxLen
+                size_t spacePos = remaining.rfind(' ', maxLen);
+                if (spacePos != std::string::npos && spacePos > 0) {
+                    line = remaining.substr(0, spacePos);
+                    remaining = remaining.substr(spacePos + 1);
+                } else {
+                    line = remaining.substr(0, maxLen);
+                    remaining = remaining.substr(maxLen);
+                }
+            }
+
+            drawText(10, yPos, line, COLOR_LIGHT_GRAY, 1);
+            yPos += 12;
+        }
+    }
+
+    // Draw bottom status
+    if (touchEnabled) {
+        drawCenteredText(screenHeight - 20, "Touch config available", COLOR_GREEN, 1);
+    } else {
+        drawCenteredText(screenHeight - 20, "Serial console only", COLOR_ORANGE, 1);
+    }
+#else
+    (void)instructions;
 #endif
 }

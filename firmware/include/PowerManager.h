@@ -42,6 +42,9 @@ class PowerManager {
     bool isPowerManagementEnabled() const;
     void setPowerManagementEnabled(bool enabled);
 
+    // Check and trigger deep sleep after data upload if enabled
+    void checkAndTriggerDeepSleep(bool enableDeepSleep, uint32_t dataUploadIntervalSeconds);
+
    private:
     bool powerManagementEnabled;
     bool displayLowPowerMode;

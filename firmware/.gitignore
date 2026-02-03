@@ -7,3 +7,15 @@ include/Version.h
 
 # Optional: Uncomment to track version.txt in git
 # version.txt
+
+# Compiled artifacts
+*.o
+*.obj
+*.exe
+*.elf
+*.bin
+*.hex
+*.a
+*.so
+*.dll
+*.dylib

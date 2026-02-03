@@ -5,6 +5,8 @@
 #include "../test/mocks/Arduino.h"
 #else
 #include <Arduino.h>
+
+#include <driver/adc.h>
 #endif
 
 // ============================================================================

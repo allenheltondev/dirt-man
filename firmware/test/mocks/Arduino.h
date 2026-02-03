@@ -1,6 +1,7 @@
 #ifndef MOCK_ARDUINO_H
 #define MOCK_ARDUINO_H
 
+#include "WString.h"
 #include <cstddef>
 #include <cstdint>
 

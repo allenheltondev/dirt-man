@@ -3,16 +3,19 @@
 
 #include <esp_task_wdt.h>
 
+#include "BootId.h"
 #include "ConfigManager.h"
 #include "DataManager.h"
 #include "DisplayManager.h"
 #include "ErrorLogger.h"
+#include "HardwareId.h"
 #include "NetworkManager.h"
 #include "PowerManager.h"
 #include "SensorManager.h"
 #include "StateManager.h"
 #include "SystemStatusManager.h"
 #include "TimeManager.h"
+#include "TouchDetector.h"
 #include "Version.h"
 #include "models/AveragedData.h"
 #include "models/SensorReadings.h"
@@ -37,6 +40,17 @@ SensorManager sensorManager;
 NetworkManager networkManager(configManager, timeManager, systemStatusManager);
 PowerManager powerManager;
 StateManager stateManager;
+
+// Global Boot ID (generated once in setup())
+String g_bootId;
+
+// Registration callback function (to be called from ConfigManager)
+void triggerManualRegistration() {
+    Serial.println("Manual registration triggered via serial console");
+    // TODO: When RegistrationManager is integrated (Task 9), call:
+    // registrationManager.registerDevice(hardwareId, g_bootId, friendlyName, firmwareVersion);
+    Serial.println("Note: Full registration implementation pending Task 9 integration");
+}
 
 // Timing variables
 unsigned long lastSensorRead = 0;
@@ -154,11 +168,118 @@ void setup() {
     // Initialize ConfigManager first (other components depend on config)
     Serial.println("Initializing ConfigManager...");
     configManager.initialize();
-    if (!configManager.loadConfig()) {
-        Serial.println("No saved config found, using defaults");
-        configManager.setDefaults();
-        configManager.saveConfig();
+
+    // Try loading from config file first
+    Serial.println("Loading configuration from file...");
+    bool configLoaded = false;
+    if (configManager.loadFromFile()) {
+        Serial.println("Config file loaded successfully");
+
+        // Validate required fields
+        if (configManager.hasRequiredFields()) {
+            Serial.println("All required fields present");
+            configLoaded = true;
+        } else {
+            Serial.println("ERROR: Required fields missing from config file");
+            String missingFields = configManager.getMissingRequiredFields();
+            Serial.print("Missing fields: ");
+            Serial.println(missingFields);
+
+            // Display error on TFT if available
+            if (displayManager.isInitialized()) {
+                displayManager.showConfigValidationError(missingFields.c_str());
+            }
+
+            // Enter provisioning mode
+            Serial.println("Entering provisioning mode...");
+            configManager.enterProvisioningMode();
+            stateManager.enterProvisioningMode();
+
+            // Show provisioning mode on display
+            if (displayManager.isInitialized()) {
+                displayManager.showProvisioningMode("Type 'help' for commands");
+            }
+
+            ErrorLogger::critical(ErrorType::SYSTEM, "Required config fields missing", "setup");
+        }
+    } else {
+        Serial.println("Config file not found or invalid, trying NVS...");
+
+        // Fall back to NVS
+        if (configManager.loadConfig()) {
+            Serial.println("Config loaded from NVS");
+
+            // Validate required fields from NVS
+            if (configManager.hasRequiredFields()) {
+                Serial.println("All required fields present");
+                configLoaded = true;
+            } else {
+                Serial.println("ERROR: Required fields missing from NVS config");
+                String missingFields = configManager.getMissingRequiredFields();
+                Serial.print("Missing fields: ");
+                Serial.println(missingFields);
+
+                // Display error on TFT if available
+                if (displayManager.isInitialized()) {
+                    displayManager.showConfigValidationError(missingFields.c_str());
+                }
+
+                // Enter provisioning mode
+                Serial.println("Entering provisioning mode...");
+                configManager.enterProvisioningMode();
+                stateManager.enterProvisioningMode();
+
+                // Show provisioning mode on display
+                if (displayManager.isInitialized()) {
+                    displayManager.showProvisioningMode("Type 'help' for commands");
+                }
+
+                ErrorLogger::critical(ErrorType::SYSTEM, "Required config fields missing", "setup");
+            }
+        } else {
+            Serial.println("No saved config found, using defaults");
+            configManager.setDefaults();
+
+            // Check if defaults satisfy required fields (they shouldn't for required fields)
+            if (!configManager.hasRequiredFields()) {
+                Serial.println("ERROR: Defaults do not satisfy required fields");
+                String missingFields = configManager.getMissingRequiredFields();
+                Serial.print("Missing fields: ");
+                Serial.println(missingFields);
+
+                // Display error on TFT if available
+                if (displayManager.isInitialized()) {
+                    displayManager.showConfigValidationError(missingFields.c_str());
+                }
+
+                // Enter provisioning mode
+                Serial.println("Entering provisioning mode...");
+                configManager.enterProvisioningMode();
+                stateManager.enterProvisioningMode();
+
+                // Show provisioning mode on display
+                if (displayManager.isInitialized()) {
+                    displayManager.showProvisioningMode("Type 'help' for commands");
+                }
+
+                ErrorLogger::critical(ErrorType::SYSTEM, "Device not configured", "setup");
+            }
+        }
     }
+
+    if (!configLoaded) {
+        Serial.println("WARNING: Device not fully configured, some features may not work");
+    }
+
+    // Generate Boot ID once (stored in RAM only, not persisted to NVS)
+    g_bootId = BootId::generate();
+    Serial.print("Boot ID: ");
+    Serial.println(g_bootId);
+
+    // Set up serial console command callbacks
+    configManager.setBootIdReference(&g_bootId);
+    configManager.setRegistrationCallback(triggerManualRegistration);
+
     Serial.println("ConfigManager initialized");
     esp_task_wdt_reset();  // Feed watchdog
 
@@ -208,6 +329,58 @@ void setup() {
         Serial.println("Continuing without display...");
         ErrorLogger::warning(ErrorType::DISPLAY, "Display initialization failed", "setup");
     }
+    esp_task_wdt_reset();  // Feed watchdog
+
+    // Perform touch detection after display initialization
+    Serial.println("Detecting touch controller...");
+    TouchDetector touchDetector;
+    TouchDetectionResult touchResult = touchDetector.detect();
+
+    if (touchResult.detected) {
+        Serial.print("Touch controller detected: ");
+        switch (touchResult.type) {
+            case TouchControllerType::XPT2046:
+                Serial.println("XPT2046 (SPI resistive)");
+                break;
+            case TouchControllerType::FT6236:
+                Serial.println("FT6236 (I2C capacitive)");
+                break;
+            case TouchControllerType::CST816:
+                Serial.println("CST816 (I2C capacitive)");
+                break;
+            case TouchControllerType::GT911:
+                Serial.println("GT911 (I2C capacitive)");
+                break;
+            default:
+                Serial.println("Unknown");
+                break;
+        }
+        Serial.print("Detection time: ");
+        Serial.print(touchResult.detectionTimeMs);
+        Serial.println(" ms");
+        ErrorLogger::info(ErrorType::SYSTEM, "Touch controller detected", "setup");
+    } else {
+        Serial.println("No touch controller detected");
+        Serial.print("Detection time: ");
+        Serial.print(touchResult.detectionTimeMs);
+        Serial.println(" ms");
+        ErrorLogger::info(ErrorType::SYSTEM, "No touch controller detected", "setup");
+    }
+
+    // Pass touch detection result to ConfigManager
+    configManager.setTouchDetected(touchResult.detected, touchResult.type);
+
+    // Pass touch detection result to DisplayManager
+    if (displayManager.isInitialized()) {
+        displayManager.setTouchEnabled(touchResult.detected, touchResult.type);
+        if (touchResult.detected) {
+            Serial.println("Touch-based config page enabled");
+        } else {
+            Serial.println("Touch-based config page disabled (no touch controller)");
+        }
+    }
+
+    Serial.println("Touch detection complete");
     esp_task_wdt_reset();  // Feed watchdog
 
     // Initialize SensorManager with calibration from config
@@ -451,6 +624,12 @@ void loop() {
                     systemStatusManager.setLastTransmissionTime(currentTime);
 
                     // Note: NetworkManager handles clearing acknowledged data from buffer
+
+                    // Check if deep sleep should be triggered after successful upload
+                    Config& config = configManager.getConfig();
+                    powerManager.checkAndTriggerDeepSleep(
+                        config.batteryMode,
+                        config.publishIntervalSamples * (config.readingIntervalMs / 1000));
                 } else {
                     Serial.println("Transmission failed, buffering data...");
                     dataManager.bufferForTransmission(avgData);
