@@ -31,6 +31,9 @@ backend/Cargo.lock  # Uncomment if this is a library: # backend/Cargo.lock
 backend/**/*.rs.bk
 backend/**/*.pdb
 
+.aws-sam/
+samconfig.toml
+
 # ============================================================================
 # UI (Future - Node.js / React / Vue / etc.)
 # ============================================================================

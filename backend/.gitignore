@@ -1,0 +1,27 @@
+# Rust build artifacts
+target/
+Cargo.lock
+
+# DynamoDB Local
+dynamodb-local/
+*.pid
+*.log
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment files
+.env
+.env.local
+
+# Test artifacts
+*.profraw
+*.profdata

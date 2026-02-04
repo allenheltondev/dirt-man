@@ -1,0 +1,863 @@
+openapi: 3.0.3
+info:
+  title: Serverless Backend API for ESP32 Devices
+  description: |
+    This API provides device registration, sensor data ingestion, and administrative functions
+    for ESP32 environmental monitoring devices. The system consists of two Lambda functions:
+    - Data Plane API: Device registration and sensor data ingestion
+    - Control Plane API: Administrative operations (API keys, devices, readings)
+  version: 1.0.0
+  contact:
+    name: API Support
+    email: support@example.com
+
+servers:
+  - url: https://data-plane-function-url.lambda-url.region.on.aws
+    description: Data Plane API (Device Operations)
+  - url: https://control-plane-function-url.lambda-url.region.on.aws
+    description: Control Plane API (Administrative Operations)
+
+tags:
+  - name: Data Plane
+    description: Device registration and sensor data ingestion
+  - name: Control Plane - API Keys
+    description: API key management operations
+  - name: Control Plane - Devices
+    description: Device management and querying
+  - name: Control Plane - Readings
+    description: Sensor reading queries
+  - name: Health
+    description: Health check endpoints
+
+paths:
+  /register:
+    post:
+      tags:
+        - Data Plane
+      summary: Register a device
+      description: |
+        Register a new device or update an existing device's last seen timestamp.
+        Returns a stable confirmation_id for the device.
+      operationId: registerDevice
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '200':
+          description: Device registered successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegisterResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+
+  /data:
+    post:
+      tags:
+        - Data Plane
+      summary: Submit sensor data
+      description: |
+        Submit sensor readings from a device. Supports batches up to 100 readings.
+        Implements idempotent processing using batch_id.
+      operationId: submitSensorData
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DataRequest'
+      responses:
+        '200':
+          description: Sensor data processed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /health:
+    get:
+      tags:
+        - Health
+      summary: Health check
+      description: Check if the API is healthy and can connect to DynamoDB
+      operationId: healthCheck
+      responses:
+        '200':
+          description: API is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        '503':
+          description: API is unhealthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnhealthyResponse'
+
+  /api-keys:
+    post:
+      tags:
+        - Control Plane - API Keys
+      summary: Create a new API key
+      description: |
+        Generate a new API key for device authentication. The raw key is only
+        returned in this response and cannot be retrieved later.
+      operationId: createApiKey
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateApiKeyRequest'
+      responses:
+        '200':
+          description: API key created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateApiKeyResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+    get:
+      tags:
+        - Control Plane - API Keys
+      summary: List API keys
+      description: List all API keys with pagination support
+      operationId: listApiKeys
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: API keys retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListApiKeysResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+
+  /api-keys/{key_id}:
+    delete:
+      tags:
+        - Control Plane - API Keys
+      summary: Revoke an API key
+      description: Revoke an API key by setting its is_active flag to false
+      operationId: revokeApiKey
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: key_id
+          in: path
+          required: true
+          description: UUID v4 identifier of the API key
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: API key revoked successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RevokeApiKeyResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /devices:
+    get:
+      tags:
+        - Control Plane - Devices
+      summary: List devices
+      description: |
+        List all registered devices sorted by last_seen_at (most recent first).
+        Supports pagination.
+      operationId: listDevices
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Devices retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListDevicesResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /devices/{hardware_id}:
+    get:
+      tags:
+        - Control Plane - Devices
+      summary: Get device details
+      description: Retrieve detailed information for a specific device
+      operationId: getDevice
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: hardware_id
+          in: path
+          required: true
+          description: MAC address of the device (XX:XX:XX:XX:XX:XX)
+          schema:
+            type: string
+            pattern: '^[A-F0-9]{2}:[A-F0-9]{2}:[A-F0-9]{2}:[A-F0-9]{2}:[A-F0-9]{2}:[A-F0-9]{2}$'
+      responses:
+        '200':
+          description: Device retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+
+  /devices/{hardware_id}/readings:
+    get:
+      tags:
+        - Control Plane - Readings
+      summary: Query device readings
+      description: |
+        Query historical sensor readings for a device with time range filtering
+        and pagination. Readings are sorted by timestamp descending (newest first).
+      operationId: queryReadings
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: hardware_id
+          in: path
+          required: true
+          description: MAC address of the device
+          schema:
+            type: string
+            pattern: '^[A-F0-9]{2}:[A-F0-9]{2}:[A-F0-9]{2}:[A-F0-9]{2}:[A-F0-9]{2}:[A-F0-9]{2}$'
+        - name: from
+          in: query
+          description: Start of time range in epoch milliseconds
+          schema:
+            type: integer
+            format: int64
+        - name: to
+          in: query
+          description: End of time range in epoch milliseconds
+          schema:
+            type: integer
+            format: int64
+        - name: limit
+          in: query
+          description: Maximum number of readings to return (default 50, max 1000)
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 50
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Readings retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueryReadingsResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /devices/{hardware_id}/latest:
+    get:
+      tags:
+        - Control Plane - Readings
+      summary: Get latest reading
+      description: Retrieve the most recent sensor reading for a device
+      operationId: getLatestReading
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: hardware_id
+          in: path
+          required: true
+          description: MAC address of the device
+          schema:
+            type: string
+            pattern: '^[A-F0-9]{2}:[A-F0-9]{2}:[A-F0-9]{2}:[A-F0-9]{2}:[A-F0-9]{2}:[A-F0-9]{2}$'
+      responses:
+        '200':
+          description: Latest reading retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Reading'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: API key for device authentication (64-character hex string)
+
+    BearerAuth:
+      type: http
+      scheme: bearer
+      description: Bearer token for administrative access
+
+  parameters:
+    Limit:
+      name: limit
+      in: query
+      description: Maximum number of items to return
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 50
+
+    Cursor:
+      name: cursor
+      in: query
+      description: Pagination cursor from previous response (base64-encoded)
+      schema:
+        type: string
+
+  schemas:
+    RegisterRequest:
+      type: object
+      required:
+        - hardware_id
+        - boot_id
+        - firmware_version
+        - capabilities
+      properties:
+        hardware_id:
+          type: string
+          pattern: '^[A-F0-9]{2}:[A-F0-9]{2}:[A-F0-9]{2}:[A-F0-9]{2}:[A-F0-9]{2}:[A-F0-9]{2}$'
+          description: MAC address in format XX:XX:XX:XX:XX:XX (uppercase hex)
+          example: "AA:BB:CC:DD:EE:FF"
+        boot_id:
+          type: string
+          format: uuid
+          description: UUID v4 generated on device boot
+          example: "550e8400-e29b-41d4-a716-446655440000"
+        firmware_version:
+          type: string
+          description: Device firmware version
+          example: "1.0.16"
+        friendly_name:
+          type: string
+          description: Human-readable device name
+          example: "greenhouse-sensor-01"
+        capabilities:
+          $ref: '#/components/schemas/Capabilities'
+
+    RegisterResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [registered]
+          description: Always "registered"
+        confirmation_id:
+          type: string
+          format: uuid
+          description: UUID v4 assigned to device (stable across re-registrations)
+          example: "7c9e6679-7425-40de-944b-e07fc1f90ae7"
+        hardware_id:
+          type: string
+          description: Echo of the hardware_id from request
+          example: "AA:BB:CC:DD:EE:FF"
+        registered_at:
+          type: string
+          format: date-time
+          description: ISO 8601 timestamp of registration
+          example: "2024-01-15T10:30:00Z"
+
+    Capabilities:
+      type: object
+      required:
+        - sensors
+        - features
+      properties:
+        sensors:
+          type: array
+          items:
+            type: string
+          description: List of available sensors
+          example: ["bme280", "ds18b20", "soil_moisture"]
+        features:
+          type: object
+          additionalProperties:
+            type: boolean
+          description: Map of feature names to boolean values
+          example:
+            tft_display: true
+            offline_buffering: true
+
+
+    DataRequest:
+      type: object
+      required:
+        - readings
+      properties:
+        readings:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/Reading'
+          description: Array of sensor readings (max 100)
+
+    Reading:
+      type: object
+      required:
+        - batch_id
+        - hardware_id
+        - boot_id
+        - firmware_version
+        - timestamp_ms
+        - sensors
+        - sensor_status
+      properties:
+        batch_id:
+          type: string
+          maxLength: 256
+          description: Unique identifier for this reading (max 256 chars, safe ASCII)
+          example: "AA:BB:CC:DD:EE:FF_7c9e6679-7425-40de-944b-e07fc1f90ae7_1704067200000_1704067800000"
+        hardware_id:
+          type: string
+          pattern: '^[A-F0-9]{2}:[A-F0-9]{2}:[A-F0-9]{2}:[A-F0-9]{2}:[A-F0-9]{2}:[A-F0-9]{2}$'
+          description: MAC address
+          example: "AA:BB:CC:DD:EE:FF"
+        boot_id:
+          type: string
+          format: uuid
+          description: UUID v4 from device boot
+          example: "7c9e6679-7425-40de-944b-e07fc1f90ae7"
+        firmware_version:
+          type: string
+          description: Device firmware version
+          example: "1.0.16"
+        timestamp_ms:
+          type: integer
+          format: int64
+          description: Epoch milliseconds UTC
+          example: 1704067800000
+        friendly_name:
+          type: string
+          description: Device name snapshot
+          example: "greenhouse-sensor-01"
+        sensors:
+          $ref: '#/components/schemas/SensorValues'
+        sensor_status:
+          $ref: '#/components/schemas/SensorStatus'
+
+    SensorValues:
+      type: object
+      properties:
+        bme280_temp_c:
+          type: number
+          format: double
+          description: BME280 temperature in Celsius
+          example: 22.5
+        ds18b20_temp_c:
+          type: number
+          format: double
+          description: DS18B20 temperature in Celsius
+          example: 21.8
+        humidity_pct:
+          type: number
+          format: double
+          description: Humidity percentage
+          example: 45.2
+        pressure_hpa:
+          type: number
+          format: double
+          description: Pressure in hectopascals
+          example: 1013.25
+        soil_moisture_pct:
+          type: number
+          format: double
+          description: Soil moisture percentage
+          example: 62.3
+
+    SensorStatus:
+      type: object
+      properties:
+        bme280:
+          type: string
+          enum: [ok, error]
+          description: BME280 sensor status
+        ds18b20:
+          type: string
+          enum: [ok, error]
+          description: DS18B20 sensor status
+        soil_moisture:
+          type: string
+          enum: [ok, error]
+          description: Soil moisture sensor status
+
+    DataResponse:
+      type: object
+      properties:
+        acknowledged_batch_ids:
+          type: array
+          items:
+            type: string
+          description: Batch IDs that were newly processed
+        duplicate_batch_ids:
+          type: array
+          items:
+            type: string
+          description: Batch IDs that were previously seen (duplicates)
+
+
+    CreateApiKeyRequest:
+      type: object
+      properties:
+        description:
+          type: string
+          description: Human-readable description for the API key
+          example: "Production devices - greenhouse cluster"
+
+    CreateApiKeyResponse:
+      type: object
+      properties:
+        key_id:
+          type: string
+          format: uuid
+          description: UUID v4 identifier for the API key
+          example: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+        api_key:
+          type: string
+          pattern: '^[a-f0-9]{64}$'
+          description: The raw API key value (64-character hex string) - only shown once
+          example: "5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8"
+        created_at:
+          type: string
+          format: date-time
+          description: ISO 8601 timestamp of creation
+          example: "2024-01-15T14:30:00Z"
+        message:
+          type: string
+          description: Warning to save the key
+          example: "API key created successfully. Save this key - it will not be shown again."
+
+    ListApiKeysResponse:
+      type: object
+      properties:
+        api_keys:
+          type: array
+          items:
+            $ref: '#/components/schemas/ApiKey'
+        next_cursor:
+          type: string
+          description: Cursor for next page (omitted if no more results)
+
+    ApiKey:
+      type: object
+      properties:
+        key_id:
+          type: string
+          format: uuid
+          description: UUID v4 identifier
+          example: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+        created_at:
+          type: string
+          format: date-time
+          description: ISO 8601 timestamp of creation
+          example: "2024-01-15T14:30:00Z"
+        last_used_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: ISO 8601 timestamp of last use (null if never used)
+          example: "2024-01-15T16:22:00Z"
+        is_active:
+          type: boolean
+          description: Whether the key is active
+          example: true
+        description:
+          type: string
+          description: Human-readable description
+          example: "Production devices - greenhouse cluster"
+
+    RevokeApiKeyResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [revoked]
+          description: Always "revoked"
+        key_id:
+          type: string
+          format: uuid
+          description: Echo of the revoked key ID
+          example: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+
+    ListDevicesResponse:
+      type: object
+      properties:
+        devices:
+          type: array
+          items:
+            $ref: '#/components/schemas/DeviceSummary'
+        next_cursor:
+          type: string
+          description: Cursor for next page (omitted if no more results)
+
+    DeviceSummary:
+      type: object
+      properties:
+        hardware_id:
+          type: string
+          description: MAC address
+          example: "AA:BB:CC:DD:EE:FF"
+        confirmation_id:
+          type: string
+          format: uuid
+          description: UUID v4 assigned to device
+          example: "7c9e6679-7425-40de-944b-e07fc1f90ae7"
+        friendly_name:
+          type: string
+          description: Human-readable device name
+          example: "greenhouse-sensor-01"
+        firmware_version:
+          type: string
+          description: Current firmware version
+          example: "1.0.16"
+        first_registered_at:
+          type: string
+          format: date-time
+          description: ISO 8601 timestamp of first registration
+          example: "2024-01-15T10:30:00Z"
+        last_seen_at:
+          type: string
+          format: date-time
+          description: ISO 8601 timestamp of last activity
+          example: "2024-01-15T14:22:00Z"
+
+
+    DeviceDetail:
+      type: object
+      properties:
+        hardware_id:
+          type: string
+          description: MAC address
+          example: "AA:BB:CC:DD:EE:FF"
+        confirmation_id:
+          type: string
+          format: uuid
+          description: UUID v4 assigned to device
+          example: "7c9e6679-7425-40de-944b-e07fc1f90ae7"
+        friendly_name:
+          type: string
+          description: Human-readable device name
+          example: "greenhouse-sensor-01"
+        firmware_version:
+          type: string
+          description: Current firmware version
+          example: "1.0.16"
+        capabilities:
+          $ref: '#/components/schemas/Capabilities'
+        first_registered_at:
+          type: string
+          format: date-time
+          description: ISO 8601 timestamp of first registration
+          example: "2024-01-15T10:30:00Z"
+        last_seen_at:
+          type: string
+          format: date-time
+          description: ISO 8601 timestamp of last activity
+          example: "2024-01-15T14:22:00Z"
+        last_boot_id:
+          type: string
+          format: uuid
+          description: UUID v4 from most recent boot
+          example: "7c9e6679-7425-40de-944b-e07fc1f90ae7"
+
+    QueryReadingsResponse:
+      type: object
+      properties:
+        readings:
+          type: array
+          items:
+            $ref: '#/components/schemas/Reading'
+        next_cursor:
+          type: string
+          description: Cursor for next page (omitted if no more results)
+
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [healthy]
+          description: Always "healthy"
+
+    UnhealthyResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [unhealthy]
+          description: Always "unhealthy"
+        error:
+          type: string
+          description: Error code
+          example: "DATABASE_ERROR"
+        message:
+          type: string
+          description: Error description
+          example: "DynamoDB connectivity check failed"
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+          description: Machine-readable error code
+          example: "INVALID_API_KEY"
+        message:
+          type: string
+          description: Human-readable error description
+          example: "API key is invalid or not found"
+
+  responses:
+    BadRequest:
+      description: Bad request - validation error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            missing_field:
+              value:
+                error: "MISSING_FIELD"
+                message: "Required field missing: firmware_version"
+            invalid_format:
+              value:
+                error: "INVALID_FORMAT"
+                message: "Invalid format for field: hardware_id"
+            batch_size_exceeded:
+              value:
+                error: "BATCH_SIZE_EXCEEDED"
+                message: "Batch size exceeds maximum of 100 readings"
+
+    Unauthorized:
+      description: Unauthorized - authentication failed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            missing_api_key:
+              value:
+                error: "MISSING_API_KEY"
+                message: "X-API-Key header is required"
+            invalid_api_key:
+              value:
+                error: "INVALID_API_KEY"
+                message: "API key is invalid or not found"
+            key_revoked:
+              value:
+                error: "KEY_REVOKED"
+                message: "API key has been revoked"
+            missing_token:
+              value:
+                error: "MISSING_TOKEN"
+                message: "Authorization header is required"
+            invalid_token:
+              value:
+                error: "INVALID_TOKEN"
+                message: "Bearer token is invalid"
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            device_not_found:
+              value:
+                error: "DEVICE_NOT_FOUND"
+                message: "Device not found"
+            no_readings:
+              value:
+                error: "NO_READINGS"
+                message: "Device exists but has no readings"
+            api_key_not_found:
+              value:
+                error: "API_KEY_NOT_FOUND"
+                message: "API key not found"
+
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            database_error:
+              value:
+                error: "DATABASE_ERROR"
+                message: "Internal database error"
+            internal_error:
+              value:
+                error: "INTERNAL_ERROR"
+                message: "Internal server error"

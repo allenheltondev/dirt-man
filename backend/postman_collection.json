@@ -1,0 +1,344 @@
+{
+  "info": {
+    "name": "Serverless Backend API",
+    "description": "API collection for ESP32 environmental monitoring devices. Includes Data Plane (device operations) and Control Plane (administrative operations) endpoints.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "data_plane_url",
+      "value": "https://your-data-plane-function-url.lambda-url.region.on.aws",
+      "type": "string"
+    },
+    {
+      "key": "control_plane_url",
+      "value": "https://your-control-plane-function-url.lambda-url.region.on.aws",
+      "type": "string"
+    },
+    {
+      "key": "api_key",
+      "value": "your-64-char-hex-api-key",
+      "type": "string"
+    },
+    {
+      "key": "admin_token",
+      "value": "your-admin-bearer-token",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Data Plane",
+      "item": [
+        {
+          "name": "Register Device",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"hardware_id\": \"AA:BB:CC:DD:EE:FF\",\n  \"boot_id\": \"550e8400-e29b-41d4-a716-446655440000\",\n  \"firmware_version\": \"1.0.16\",\n  \"friendly_name\": \"greenhouse-sensor-01\",\n  \"capabilities\": {\n    \"sensors\": [\"bme280\", \"ds18b20\", \"soil_moisture\"],\n    \"features\": {\n      \"tft_display\": true,\n      \"offline_buffering\": true\n    }\n  }\n}"
+            },
+            "url": {
+              "raw": "{{data_plane_url}}/register",
+              "host": ["{{data_plane_url}}"],
+              "path": ["register"]
+            },
+            "description": "Register a new device or update an existing device's last seen timestamp."
+          }
+        },
+
+        {
+          "name": "Submit Sensor Data",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"readings\": [\n    {\n      \"batch_id\": \"AA:BB:CC:DD:EE:FF_550e8400-e29b-41d4-a716-446655440000_1704067200000_1704067800000\",\n      \"hardware_id\": \"AA:BB:CC:DD:EE:FF\",\n      \"boot_id\": \"550e8400-e29b-41d4-a716-446655440000\",\n      \"firmware_version\": \"1.0.16\",\n      \"timestamp_ms\": 1704067800000,\n      \"friendly_name\": \"greenhouse-sensor-01\",\n      \"sensors\": {\n        \"bme280_temp_c\": 22.5,\n        \"ds18b20_temp_c\": 21.8,\n        \"humidity_pct\": 45.2,\n        \"pressure_hpa\": 1013.25,\n        \"soil_moisture_pct\": 62.3\n      },\n      \"sensor_status\": {\n        \"bme280\": \"ok\",\n        \"ds18b20\": \"ok\",\n        \"soil_moisture\": \"ok\"\n      }\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{data_plane_url}}/data",
+              "host": ["{{data_plane_url}}"],
+              "path": ["data"]
+            },
+            "description": "Submit sensor readings from a device. Supports batches up to 100 readings."
+          }
+        },
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{data_plane_url}}/health",
+              "host": ["{{data_plane_url}}"],
+              "path": ["health"]
+            },
+            "description": "Check if the Data Plane API is healthy."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Control Plane - API Keys",
+      "item": [
+        {
+          "name": "Create API Key",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"description\": \"Production devices - greenhouse cluster\"\n}"
+            },
+            "url": {
+              "raw": "{{control_plane_url}}/api-keys",
+              "host": ["{{control_plane_url}}"],
+              "path": ["api-keys"]
+            },
+            "description": "Create a new API key for device authentication. The raw key is only shown once."
+          }
+        },
+        {
+          "name": "List API Keys",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{control_plane_url}}/api-keys?limit=10",
+              "host": ["{{control_plane_url}}"],
+              "path": ["api-keys"],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "10"
+                },
+                {
+                  "key": "cursor",
+                  "value": "",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "List all API keys with pagination support."
+          }
+        },
+        {
+          "name": "Revoke API Key",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{control_plane_url}}/api-keys/:key_id",
+              "host": ["{{control_plane_url}}"],
+              "path": ["api-keys", ":key_id"],
+              "variable": [
+                {
+                  "key": "key_id",
+                  "value": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                }
+              ]
+            },
+            "description": "Revoke an API key by setting its is_active flag to false."
+          }
+        }
+      ]
+    },
+
+    {
+      "name": "Control Plane - Devices",
+      "item": [
+        {
+          "name": "List Devices",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{control_plane_url}}/devices?limit=20",
+              "host": ["{{control_plane_url}}"],
+              "path": ["devices"],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "20"
+                },
+                {
+                  "key": "cursor",
+                  "value": "",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "List all registered devices sorted by last_seen_at (most recent first)."
+          }
+        },
+        {
+          "name": "Get Device Details",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{control_plane_url}}/devices/:hardware_id",
+              "host": ["{{control_plane_url}}"],
+              "path": ["devices", ":hardware_id"],
+              "variable": [
+                {
+                  "key": "hardware_id",
+                  "value": "AA:BB:CC:DD:EE:FF"
+                }
+              ]
+            },
+            "description": "Retrieve detailed information for a specific device."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Control Plane - Readings",
+      "item": [
+        {
+          "name": "Query Device Readings",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{control_plane_url}}/devices/:hardware_id/readings?limit=50&from=1704067200000&to=1704153600000",
+              "host": ["{{control_plane_url}}"],
+              "path": ["devices", ":hardware_id", "readings"],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "50"
+                },
+                {
+                  "key": "from",
+                  "value": "1704067200000",
+                  "description": "Start of time range in epoch milliseconds"
+                },
+                {
+                  "key": "to",
+                  "value": "1704153600000",
+                  "description": "End of time range in epoch milliseconds"
+                },
+                {
+                  "key": "cursor",
+                  "value": "",
+                  "disabled": true
+                }
+              ],
+              "variable": [
+                {
+                  "key": "hardware_id",
+                  "value": "AA:BB:CC:DD:EE:FF"
+                }
+              ]
+            },
+            "description": "Query historical sensor readings for a device with time range filtering."
+          }
+        },
+        {
+          "name": "Get Latest Reading",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{control_plane_url}}/devices/:hardware_id/latest",
+              "host": ["{{control_plane_url}}"],
+              "path": ["devices", ":hardware_id", "latest"],
+              "variable": [
+                {
+                  "key": "hardware_id",
+                  "value": "AA:BB:CC:DD:EE:FF"
+                }
+              ]
+            },
+            "description": "Retrieve the most recent sensor reading for a device."
+          }
+        },
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{control_plane_url}}/health",
+              "host": ["{{control_plane_url}}"],
+              "path": ["health"]
+            },
+            "description": "Check if the Control Plane API is healthy."
+          }
+        }
+      ]
+    }
+  ]
+}

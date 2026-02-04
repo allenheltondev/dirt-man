@@ -1,0 +1,238 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Serverless Backend API for ESP32 Environmental Monitoring Devices
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, staging, prod]
+    Description: Deployment environment
+
+  AdminToken:
+    Type: String
+    NoEcho: true
+    Description: Bearer token for Control Plane API authentication
+
+  ApiKeyPepper:
+    Type: String
+    NoEcho: true
+    Description: Secret pepper value for API key hashing
+
+  CorsAllowedOrigin:
+    Type: String
+    Default: "*"
+    Description: Allowed origin for CORS requests (use specific domain in production)
+
+Globals:
+  Function:
+    Runtime: provided.al2023
+    Architectures: [arm64]
+    Handler: bootstrap
+    CodeUri: .
+    Timeout: 30
+    MemorySize: 512
+    Tracing: Active
+    Environment:
+      Variables:
+        RUST_LOG: info
+
+Resources:
+  # ============================================================================
+  # DynamoDB Tables
+  # ============================================================================
+
+  # Devices Table
+  # Purpose: Store device registration information and track device activity
+  # Schema locked per task 1.7.1
+  DevicesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: hardware_id
+          AttributeType: S
+        - AttributeName: gsi1pk
+          AttributeType: S
+        - AttributeName: gsi1sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: hardware_id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: gsi1
+          KeySchema:
+            - AttributeName: gsi1pk
+              KeyType: HASH
+            - AttributeName: gsi1sk
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: esp32-backend
+
+  # API Keys Table
+  # Purpose: Store API keys for device authentication
+  # Schema locked per task 1.7.1
+  ApiKeysTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: key_id
+          AttributeType: S
+        - AttributeName: api_key_hash
+          AttributeType: S
+        - AttributeName: gsi1pk
+          AttributeType: S
+        - AttributeName: gsi1sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: key_id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: api_key_hash_index
+          KeySchema:
+            - AttributeName: api_key_hash
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+        - IndexName: gsi1
+          KeySchema:
+            - AttributeName: gsi1pk
+              KeyType: HASH
+            - AttributeName: gsi1sk
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+
+  # Processed Batches Table
+  # Purpose: Track processed batch IDs for idempotent data ingestion
+  # Schema locked per task 1.7.1
+  ProcessedBatchesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: batch_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: batch_id
+          KeyType: HASH
+      TimeToLiveSpecification:
+        Enabled: true
+        AttributeName: expiration_time
+
+  # Device Readings Table
+  # Purpose: Store time-series sensor data for querying and analysis
+  # Schema locked per task 1.7.1
+  DeviceReadingsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: hardware_id
+          AttributeType: S
+        - AttributeName: ts_batch
+          AttributeType: S
+      KeySchema:
+        - AttributeName: hardware_id
+          KeyType: HASH
+        - AttributeName: ts_batch
+          KeyType: RANGE
+      TimeToLiveSpecification:
+        Enabled: true
+        AttributeName: expiration_time
+
+  # ============================================================================
+  # Lambda Functions
+  # ============================================================================
+
+  # Data Plane Lambda Function
+  # Purpose: Handle device registration and sensor data ingestion
+  DataPlaneFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: rust-cargolambda
+      BuildProperties:
+        Binary: data
+    Properties:
+      Environment:
+        Variables:
+          DEVICES_TABLE: !Ref DevicesTable
+          API_KEYS_TABLE: !Ref ApiKeysTable
+          PROCESSED_BATCHES_TABLE: !Ref ProcessedBatchesTable
+          DEVICE_READINGS_TABLE: !Ref DeviceReadingsTable
+          API_KEY_PEPPER: !Ref ApiKeyPepper
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - Version: 2012-10-17
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:PutItem
+                - dynamodb:GetItem
+                - dynamodb:Query
+                - dynamodb:UpdateItem
+              Resource:
+                - !GetAtt DevicesTable.Arn
+                - !GetAtt ApiKeysTable.Arn
+                - !GetAtt ProcessedBatchesTable.Arn
+                - !GetAtt DeviceReadingsTable.Arn
+      FunctionUrlConfig:
+        AuthType: NONE
+
+  # Control Plane Lambda Function
+  # Purpose: Handle administrative operations (device management, API key management, data queries)
+  ControlPlaneFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: rust-cargolambda
+      BuildProperties:
+        Binary: control
+    Properties:
+      Environment:
+        Variables:
+          DEVICES_TABLE: !Ref DevicesTable
+          API_KEYS_TABLE: !Ref ApiKeysTable
+          DEVICE_READINGS_TABLE: !Ref DeviceReadingsTable
+          ADMIN_TOKEN: !Ref AdminToken
+          API_KEY_PEPPER: !Ref ApiKeyPepper
+          CORS_ALLOWED_ORIGIN: !Ref CorsAllowedOrigin
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - Version: 2012-10-17
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:PutItem
+                - dynamodb:GetItem
+                - dynamodb:Query
+                - dynamodb:UpdateItem
+                - dynamodb:DeleteItem
+                - dynamodb:Scan
+              Resource:
+                - !GetAtt DevicesTable.Arn
+                - !Sub "${DevicesTable.Arn}/index/*"
+                - !GetAtt ApiKeysTable.Arn
+                - !Sub "${ApiKeysTable.Arn}/index/*"
+            - Effect: Allow
+              Action:
+                - dynamodb:Query
+                - dynamodb:GetItem
+              Resource:
+                - !GetAtt DeviceReadingsTable.Arn
+      FunctionUrlConfig:
+        AuthType: NONE
+
+Outputs:
+  DataPlaneFunctionUrl:
+    Description: Data Plane API Function URL
+    Value: !GetAtt DataPlaneFunctionUrl.FunctionUrl
+
+  ControlPlaneFunctionUrl:
+    Description: Control Plane API Function URL
+    Value: !GetAtt ControlPlaneFunctionUrl.FunctionUrl

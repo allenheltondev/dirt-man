@@ -1,0 +1,59 @@
+[package]
+name = "esp32-backend"
+version = "0.1.0"
+edition = "2021"
+authors = ["Dirt Man Team"]
+
+[features]
+# Feature for exposing test utilities in integration tests
+test-utils = []
+
+[lib]
+name = "esp32_backend"
+path = "src/shared/lib.rs"
+
+[dependencies]
+# AWS SDK dependencies
+aws-config = "1.1"
+aws-sdk-dynamodb = "1.12"
+
+# Lambda runtime
+lambda_runtime = "0.8"
+lambda_http = "0.8"
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Utilities
+uuid = { version = "1.6", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+base64 = "0.21"
+hex = "0.4"
+regex = "1.10"
+
+# Cryptography
+sha2 = "0.10"
+rand = "0.8"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Error handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+# Testing
+proptest = "1.4"
+
+[[bin]]
+name = "data"
+path = "src/data.rs"
+
+[[bin]]
+name = "control"
+path = "src/control.rs"

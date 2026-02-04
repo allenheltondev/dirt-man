@@ -1,5 +1,5 @@
 # Dirt Man
-
+  
 ![Firmware Version](https://img.shields.io/badge/firmware-1.0.16-blue)
 
 IoT environmental monitoring system for tracking soil moisture, temperature, humidity, and atmospheric pressure. Built with ESP32 firmware, designed for agricultural and greenhouse applications.

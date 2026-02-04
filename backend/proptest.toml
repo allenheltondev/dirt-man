@@ -1,0 +1,22 @@
+# Proptest configuration for property-based testing
+# This file configures the behavior of proptest across all tests
+
+[proptest]
+# Minimum number of test cases to run for each property test
+# Set to 100 as per task requirements
+cases = 100
+
+# Maximum number of shrinking iterations when a test fails
+# This helps find the minimal failing case
+max_shrink_iters = 10000
+
+# Timeout for each test case in milliseconds
+# Set to 5 seconds to allow for complex property tests
+timeout = 5000
+
+# Fork mode - run tests in separate processes to isolate failures
+# Disabled for faster execution in CI/CD
+fork = false
+
+# Verbose output for debugging
+verbose = 0
