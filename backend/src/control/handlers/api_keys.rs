@@ -49,8 +49,9 @@ pub struct ApiKeyListItem {
 pub struct ListApiKeysResponse {
     /// List of API keys
     pub api_keys: Vec<ApiKeyListItem>,
-    /// Optional cursor for pagination
-    pub next_cursor: Option<String>,
+    /// Optional pageToken for pagination
+    #[serde(rename = "pageToken", skip_serializing_if = "Option::is_none")]
+    pub page_token: Option<String>,
 }
 
 /// Response payload for API key revocation
@@ -200,28 +201,28 @@ pub async fn list_api_keys(
 
     let limit = limit.min(100).max(1); // Clamp between 1 and 100
 
-    let cursor = query_params.first("cursor").map(|s| s.to_string());
+    let page_token = query_params.first("pageToken").map(|s| s.to_string());
 
     info!(
         request_id = %request_id,
         limit = limit,
-        has_cursor = cursor.is_some(),
+        has_page_token = page_token.is_some(),
         "Parsed query parameters"
     );
 
     // Query DynamoDB
-    let (api_keys, next_cursor) = crate::repo::api_keys::list_api_keys(
+    let (api_keys, page_token) = crate::repo::api_keys::list_api_keys(
         &config.dynamodb_client,
         &config.api_keys_table,
         limit,
-        cursor,
+        page_token,
     )
     .await?;
 
     info!(
         request_id = %request_id,
         count = api_keys.len(),
-        has_next_cursor = next_cursor.is_some(),
+        has_next_page_token = page_token.is_some(),
         "Retrieved API keys from DynamoDB"
     );
 
@@ -240,7 +241,7 @@ pub async fn list_api_keys(
     // Build response
     let response = ListApiKeysResponse {
         api_keys: api_key_items,
-        next_cursor,
+        page_token,
     };
 
     let response_body = serde_json::to_string(&response).map_err(|e| {
@@ -507,15 +508,15 @@ mod tests {
                     description: None,
                 },
             ],
-            next_cursor: Some("base64cursor".to_string()),
+            page_token: Some("base64pagetoken".to_string()),
         };
 
         let json = serde_json::to_string(&response).unwrap();
         assert!(json.contains("api_keys"));
         assert!(json.contains("key-1"));
         assert!(json.contains("key-2"));
-        assert!(json.contains("next_cursor"));
-        assert!(json.contains("base64cursor"));
+        assert!(json.contains("nextPageToken"));
+        assert!(json.contains("base64pagetoken"));
 
         // Verify api_key_hash is NOT in the response
         assert!(!json.contains("api_key_hash"));

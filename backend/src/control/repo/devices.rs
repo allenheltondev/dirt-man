@@ -168,6 +168,56 @@ pub async fn update_device_timestamps(
     Ok(())
 }
 
+/// Update device friendly_name
+///
+/// Uses UpdateItem to update the friendly_name field.
+/// Note: Historical readings preserve the friendly_name value at the time of ingestion,
+/// so changes to the device's friendly_name do not affect previously stored readings.
+///
+/// # Arguments
+/// * `client` - DynamoDB client
+/// * `table_name` - Name of the devices table
+/// * `hardware_id` - MAC address of the device (partition key)
+/// * `friendly_name` - New friendly name (or None to remove)
+///
+/// # Returns
+/// * `Ok(())` - Update successful
+/// * `Err(DatabaseError)` - DynamoDB error occurred
+pub async fn update_friendly_name(
+    client: &DynamoDbClient,
+    table_name: &str,
+    hardware_id: &str,
+    friendly_name: Option<&str>,
+) -> Result<(), DatabaseError> {
+    match friendly_name {
+        Some(name) => {
+            // Set or update friendly_name
+            client
+                .update_item()
+                .table_name(table_name)
+                .key("hardware_id", AttributeValue::S(hardware_id.to_string()))
+                .update_expression("SET friendly_name = :name")
+                .expression_attribute_values(":name", AttributeValue::S(name.to_string()))
+                .send()
+                .await
+                .map_err(|e| DatabaseError::DynamoDb(format!("{:?}", e)))?;
+        }
+        None => {
+            // Remove friendly_name
+            client
+                .update_item()
+                .table_name(table_name)
+                .key("hardware_id", AttributeValue::S(hardware_id.to_string()))
+                .update_expression("REMOVE friendly_name")
+                .send()
+                .await
+                .map_err(|e| DatabaseError::DynamoDb(format!("{:?}", e)))?;
+        }
+    }
+
+    Ok(())
+}
+
 /// Convert a DynamoDB item to a Device struct
 fn item_to_device(item: &HashMap<String, AttributeValue>) -> Result<Device, DatabaseError> {
     let hardware_id = item
@@ -292,7 +342,7 @@ fn attribute_value_to_capabilities(attr: &AttributeValue) -> Result<Capabilities
 #[derive(Debug, Clone)]
 pub struct DeviceListResponse {
     pub devices: Vec<Device>,
-    pub next_cursor: Option<String>,
+    pub page_token: Option<String>,
 }
 
 /// List devices with pagination, sorted by last_seen_at descending
@@ -304,17 +354,17 @@ pub struct DeviceListResponse {
 /// * `client` - DynamoDB client
 /// * `table_name` - Name of the devices table
 /// * `limit` - Maximum number of devices to return (default 50, max 1000)
-/// * `cursor` - Optional pagination cursor from previous response
+/// * `page_token` - Optional pagination pageToken from previous response
 ///
 /// # Returns
-/// * `DeviceListResponse` with devices and optional next_cursor
+/// * `DeviceListResponse` with devices and optional nextPageToken
 pub async fn list_devices(
     client: &DynamoDbClient,
     table_name: &str,
     limit: Option<i32>,
-    cursor: Option<String>,
+    page_token: Option<String>,
 ) -> Result<DeviceListResponse, DatabaseError> {
-    use esp32_backend::shared::cursor::{decode_device_cursor, encode_device_cursor};
+    use esp32_backend::shared::cursor::{decode_device_page_token, encode_device_page_token};
 
     // Validate and apply limit (default 50, max 1000)
     let limit = match limit {
@@ -338,12 +388,12 @@ pub async fn list_devices(
         .scan_index_forward(false) // Most recent first (descending order)
         .limit(limit);
 
-    // Add cursor if provided
-    if let Some(cursor_str) = cursor {
-        let cursor = decode_device_cursor(&cursor_str)
-            .map_err(|e| DatabaseError::Serialization(format!("Invalid cursor: {}", e.message)))?;
+    // Add pageToken if provided
+    if let Some(page_token_str) = page_token {
+        let page_token = decode_device_page_token(&page_token_str)
+            .map_err(|e| DatabaseError::Serialization(format!("Invalid pageToken: {}", e.message)))?;
 
-        let start_key = cursor_to_exclusive_start_key(&cursor);
+        let start_key = page_token_to_exclusive_start_key(&page_token);
         query = query.set_exclusive_start_key(Some(start_key));
     }
 
@@ -361,27 +411,27 @@ pub async fn list_devices(
         .map(|item| item_to_device(&item))
         .collect::<Result<Vec<_>, _>>()?;
 
-    // Encode next cursor if more results available
-    let next_cursor = result.last_evaluated_key.and_then(|key| {
+    // Encode next pageToken if more results available
+    let page_token = result.last_evaluated_key.and_then(|key| {
         let hardware_id = key.get("hardware_id")?.as_s().ok()?;
         let gsi1sk = key.get("gsi1sk")?.as_s().ok()?;
-        encode_device_cursor(hardware_id, gsi1sk).ok()
+        encode_device_page_token(hardware_id, gsi1sk).ok()
     });
 
     Ok(DeviceListResponse {
         devices,
-        next_cursor,
+        page_token,
     })
 }
 
-/// Convert cursor to DynamoDB exclusive start key
-fn cursor_to_exclusive_start_key(
-    cursor: &esp32_backend::shared::cursor::DeviceListCursor,
+/// Convert pageToken to DynamoDB exclusive start key
+fn page_token_to_exclusive_start_key(
+    page_token: &esp32_backend::shared::cursor::DeviceListPageToken,
 ) -> HashMap<String, AttributeValue> {
     let mut key = HashMap::new();
     key.insert(
         "hardware_id".to_string(),
-        AttributeValue::S(cursor.hardware_id.clone()),
+        AttributeValue::S(page_token.hardware_id.clone()),
     );
     key.insert(
         "gsi1pk".to_string(),
@@ -389,7 +439,7 @@ fn cursor_to_exclusive_start_key(
     );
     key.insert(
         "gsi1sk".to_string(),
-        AttributeValue::S(cursor.gsi1sk.clone()),
+        AttributeValue::S(page_token.gsi1sk.clone()),
     );
     key
 }

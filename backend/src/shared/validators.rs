@@ -142,6 +142,41 @@ pub fn validate_batch_id(batch_id: &str) -> Result<(), ValidationError> {
     Ok(())
 }
 
+/// Validate friendly_name format
+/// Friendly name is optional, max 64 chars, safe ASCII only
+pub fn validate_friendly_name(friendly_name: &str) -> Result<(), ValidationError> {
+    if friendly_name.is_empty() {
+        return Err(ValidationError::new(
+            "friendly_name",
+            "Friendly name cannot be empty",
+        ));
+    }
+
+    if friendly_name.len() > 64 {
+        return Err(ValidationError::new(
+            "friendly_name",
+            format!(
+                "Friendly name length {} exceeds maximum of 64 characters",
+                friendly_name.len()
+            ),
+        ));
+    }
+
+    // Safe ASCII: printable ASCII characters (0x20-0x7E) excluding control characters
+    // This includes alphanumeric, punctuation, and common symbols
+    if !friendly_name
+        .chars()
+        .all(|c| c.is_ascii() && (' '..='~').contains(&c))
+    {
+        return Err(ValidationError::new(
+            "friendly_name",
+            "Friendly name must contain only safe ASCII characters (printable ASCII 0x20-0x7E)",
+        ));
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -218,5 +253,22 @@ mod tests {
         assert!(validate_batch_id("batch\nid").is_err()); // control character
         assert!(validate_batch_id("batch\tid").is_err()); // tab
         assert!(validate_batch_id("batch\x00id").is_err()); // null byte
+    }
+
+    #[test]
+    fn test_validate_friendly_name() {
+        // Valid friendly names
+        assert!(validate_friendly_name("greenhouse-sensor-01").is_ok());
+        assert!(validate_friendly_name("My Device").is_ok());
+        assert!(validate_friendly_name("sensor_123").is_ok());
+        assert!(validate_friendly_name("a").is_ok()); // single char
+        assert!(validate_friendly_name(&"a".repeat(64)).is_ok()); // exactly 64 chars
+
+        // Invalid friendly names
+        assert!(validate_friendly_name("").is_err()); // empty
+        assert!(validate_friendly_name(&"a".repeat(65)).is_err()); // too long
+        assert!(validate_friendly_name("device\nname").is_err()); // control character
+        assert!(validate_friendly_name("device\tname").is_err()); // tab
+        assert!(validate_friendly_name("device\x00name").is_err()); // null byte
     }
 }

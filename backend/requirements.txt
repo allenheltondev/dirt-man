@@ -1,0 +1,35 @@
+# AWS Lambda Dependencies for Plant Insights and Events Feature
+# Python 3.12 runtime
+
+# AWS SDK for Python - DynamoDB operations, Lambda runtime
+boto3==1.35.36
+botocore==1.35.36
+
+# AWS Lambda Powertools - Structured logging, tracing, and metrics
+aws-lambda-powertools==2.43.1
+
+# LLM Client Libraries
+# OpenAI API client for GPT models
+openai==1.54.4
+
+# Anthropic API client for Claude models
+anthropic==0.39.0
+
+# Additional dependencies for data processing
+# Type hints and validation
+pydantic==2.9.2
+
+# HTTP client with retry support
+requests==2.32.3
+urllib3==2.2.3
+
+# JSON schema validation
+jsonschema==4.23.0
+
+# Date/time utilities
+python-dateutil==2.9.0.post0
+
+# Testing dependencies (for local development and CI)
+pytest==8.3.3
+pytest-mock==3.14.0
+moto==5.0.18  # AWS service mocking for tests

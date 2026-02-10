@@ -1,0 +1,15 @@
+# Shared dependencies for Python Lambda functions
+# These dependencies are used across multiple Lambda functions
+
+# AWS SDK for Python - DynamoDB operations, Lambda runtime
+boto3>=1.34.0
+
+# AWS Lambda Powertools - Structured logging, tracing, and metrics
+aws-lambda-powertools>=2.30.0
+
+# Type checking and validation
+pydantic>=2.5.0
+typing-extensions>=4.9.0
+
+# Date/time utilities
+python-dateutil>=2.8.2

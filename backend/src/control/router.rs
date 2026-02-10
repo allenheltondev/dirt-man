@@ -90,19 +90,38 @@ fn normalize_path(path: &str) -> String {
         return path.to_string();
     }
 
+    // Strip CloudFront path prefixes if present
+    let path = path
+        .strip_prefix("/api/control")
+        .or_else(|| path.strip_prefix("/api/data"))
+        .unwrap_or(path);
+
     path.trim_end_matches('/').to_string()
 }
 
 async fn route_device_path(event: Request, config: &ControlConfig, path: &str) -> Response<Body> {
     let request_id = event.lambda_context().request_id.clone();
+    let method = event.method();
     let parts: Vec<&str> = path.trim_start_matches("/devices/").split('/').collect();
 
     match parts.as_slice() {
         [hardware_id] => {
-            info!(request_id = %request_id, hardware_id = %hardware_id, "Device detail endpoint");
-            match handlers::devices::get_device_detail(event, config, hardware_id).await {
-                Ok(response) => response,
-                Err(e) => e.to_http_response(&request_id),
+            match method {
+                &Method::GET => {
+                    info!(request_id = %request_id, hardware_id = %hardware_id, "Device detail endpoint");
+                    match handlers::devices::get_device_detail(event, config, hardware_id).await {
+                        Ok(response) => response,
+                        Err(e) => e.to_http_response(&request_id),
+                    }
+                }
+                &Method::PUT => {
+                    info!(request_id = %request_id, hardware_id = %hardware_id, "Update device endpoint");
+                    match handlers::devices::update_device_friendly_name(event, config, hardware_id).await {
+                        Ok(response) => response,
+                        Err(e) => e.to_http_response(&request_id),
+                    }
+                }
+                _ => not_found(&request_id),
             }
         }
         [hardware_id, "readings"] => {

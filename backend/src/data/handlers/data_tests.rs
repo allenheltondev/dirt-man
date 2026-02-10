@@ -17,7 +17,8 @@ mod tests {
     use super::super::data::{handle_data, DataRequest, DataResponse};
     use crate::config::Config;
     use crate::error::{ApiError, AuthError, ValidationError};
-    use esp32_backend::{FixedClock, Reading, SensorStatus, SensorValues};
+    use esp32_backend::domain::{Reading, SensorStatus, SensorValues};
+    use esp32_backend::FixedClock;
     use lambda_http::{Body, Request};
 
     // ============================================================================

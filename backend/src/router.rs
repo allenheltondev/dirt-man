@@ -77,14 +77,21 @@ pub async fn route_request(
     }
 }
 
-/// Normalize a path by removing trailing slashes
+/// Normalize a path by removing trailing slashes and CloudFront prefixes
 ///
 /// This ensures that /register and /register/ are treated the same.
+/// It also strips /api/control and /api/data prefixes added by CloudFront routing.
 /// The root path "/" is preserved as-is.
 fn normalize_path(path: &str) -> String {
     if path == "/" {
         return path.to_string();
     }
+
+    // Strip CloudFront path prefixes if present
+    let path = path
+        .strip_prefix("/api/control")
+        .or_else(|| path.strip_prefix("/api/data"))
+        .unwrap_or(path);
 
     // Remove trailing slash if present
     path.trim_end_matches('/').to_string()

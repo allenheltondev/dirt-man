@@ -1,0 +1,7 @@
+# Function-specific dependencies
+# Add dependencies here that are only needed by specific Lambda functions
+
+# For insight_generator.py - LLM API integration
+requests>=2.31.0
+openai>=1.0.0
+

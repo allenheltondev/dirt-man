@@ -3,7 +3,7 @@ use aws_sdk_dynamodb::Client as DynamoDbClient;
 use std::collections::HashMap;
 
 use crate::error::DatabaseError;
-use esp32_backend::shared::cursor::{decode_api_key_cursor, encode_api_key_cursor};
+use esp32_backend::shared::cursor::{decode_api_key_page_token, encode_api_key_page_token};
 use esp32_backend::shared::domain::ApiKey;
 use esp32_backend::shared::time::Clock;
 
@@ -191,22 +191,22 @@ pub async fn create_api_key(
 /// List API keys with pagination
 ///
 /// Queries the GSI_list (pk=gsi1pk="api_keys") sorted by gsi1sk (created_at) descending.
-/// Returns a list of API keys and an optional cursor for pagination.
+/// Returns a list of API keys and an optional pageToken for pagination.
 ///
 /// # Arguments
 /// * `client` - DynamoDB client
 /// * `table_name` - Name of the api_keys table
 /// * `limit` - Maximum number of API keys to return
-/// * `cursor` - Optional base64-encoded cursor for pagination
+/// * `page_token` - Optional base64-encoded pageToken for pagination
 ///
 /// # Returns
-/// * `Ok((Vec<ApiKey>, Option<String>))` - List of API keys and optional next cursor
+/// * `Ok((Vec<ApiKey>, Option<String>))` - List of API keys and optional next pageToken
 /// * `Err(DatabaseError)` - DynamoDB error occurred
 pub async fn list_api_keys(
     client: &DynamoDbClient,
     table_name: &str,
     limit: i32,
-    cursor: Option<String>,
+    page_token: Option<String>,
 ) -> Result<(Vec<ApiKey>, Option<String>), DatabaseError> {
     let mut query = client
         .query()
@@ -217,18 +217,18 @@ pub async fn list_api_keys(
         .scan_index_forward(false) // Descending order (most recent first)
         .limit(limit);
 
-    // Handle pagination cursor
-    if let Some(cursor_str) = cursor {
-        let cursor = decode_api_key_cursor(&cursor_str)
-            .map_err(|e| DatabaseError::Serialization(format!("Invalid cursor: {}", e)))?;
+    // Handle pagination pageToken
+    if let Some(page_token_str) = page_token {
+        let page_token = decode_api_key_page_token(&page_token_str)
+            .map_err(|e| DatabaseError::Serialization(format!("Invalid pageToken: {}", e)))?;
 
         let mut start_key = HashMap::new();
-        start_key.insert("key_id".to_string(), AttributeValue::S(cursor.key_id));
+        start_key.insert("key_id".to_string(), AttributeValue::S(page_token.key_id));
         start_key.insert(
             "gsi1pk".to_string(),
             AttributeValue::S("api_keys".to_string()),
         );
-        start_key.insert("gsi1sk".to_string(), AttributeValue::S(cursor.gsi1sk));
+        start_key.insert("gsi1sk".to_string(), AttributeValue::S(page_token.gsi1sk));
 
         query = query.set_exclusive_start_key(Some(start_key));
     }
@@ -248,14 +248,14 @@ pub async fn list_api_keys(
 
     let api_keys = api_keys?;
 
-    // Encode next cursor if there are more results
-    let next_cursor = result.last_evaluated_key.and_then(|key| {
+    // Encode next pageToken if there are more results
+    let page_token = result.last_evaluated_key.and_then(|key| {
         let key_id = key.get("key_id")?.as_s().ok()?;
         let gsi1sk = key.get("gsi1sk")?.as_s().ok()?;
-        encode_api_key_cursor(key_id, gsi1sk).ok()
+        encode_api_key_page_token(key_id, gsi1sk).ok()
     });
 
-    Ok((api_keys, next_cursor))
+    Ok((api_keys, page_token))
 }
 
 /// Revoke an API key by setting is_active to false
@@ -502,25 +502,25 @@ mod tests {
     }
 
     #[test]
-    fn test_list_api_keys_pagination_cursor() {
-        // Verify cursor encoding/decoding structure
+    fn test_list_api_keys_pagination_page_token() {
+        // Verify pageToken encoding/decoding structure
         // Actual pagination requires integration tests
 
         let key_id = "test-key-id";
         let gsi1sk = "2024-01-15T10:30:00Z";
 
-        // Verify cursor can be encoded
-        let cursor = encode_api_key_cursor(key_id, gsi1sk);
-        assert!(cursor.is_ok());
+        // Verify pageToken can be encoded
+        let page_token = encode_api_key_page_token(key_id, gsi1sk);
+        assert!(page_token.is_ok());
 
-        // Verify cursor can be decoded
-        let cursor_str = cursor.unwrap();
-        let decoded = decode_api_key_cursor(&cursor_str);
+        // Verify pageToken can be decoded
+        let page_token_str = page_token.unwrap();
+        let decoded = decode_api_key_page_token(&page_token_str);
         assert!(decoded.is_ok());
 
-        let decoded_cursor = decoded.unwrap();
-        assert_eq!(decoded_cursor.key_id, key_id);
-        assert_eq!(decoded_cursor.gsi1sk, gsi1sk);
+        let decoded_page_token = decoded.unwrap();
+        assert_eq!(decoded_page_token.key_id, key_id);
+        assert_eq!(decoded_page_token.gsi1sk, gsi1sk);
     }
 
     #[test]

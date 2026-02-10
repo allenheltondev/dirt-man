@@ -126,8 +126,9 @@ Resources:
         Enabled: true
         AttributeName: expiration_time
 
-  # Device Readings Table
+  # Device Readings Table (Readings Table for Plant Insights)
   # Purpose: Store time-series sensor data for querying and analysis
+  # Source of truth for ingestion - feeds event detection, aggregation, and status updates
   # Schema locked per task 1.7.1
   DeviceReadingsTable:
     Type: AWS::DynamoDB::Table
@@ -143,9 +144,238 @@ Resources:
           KeyType: HASH
         - AttributeName: ts_batch
           KeyType: RANGE
+      StreamSpecification:
+        StreamViewType: NEW_IMAGE
       TimeToLiveSpecification:
         Enabled: true
         AttributeName: expiration_time
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: esp32-backend
+
+  # Plant Events Table
+  # Purpose: Store detected events (watering, drying, stress, anomalies)
+  # Supports per-device queries and cross-device event type queries
+  PlantEventsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: hardware_id
+          AttributeType: S
+        - AttributeName: start_time_ms
+          AttributeType: N
+        - AttributeName: event_type
+          AttributeType: S
+      KeySchema:
+        - AttributeName: hardware_id
+          KeyType: HASH
+        - AttributeName: start_time_ms
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: EventTypeIndex
+          KeySchema:
+            - AttributeName: event_type
+              KeyType: HASH
+            - AttributeName: start_time_ms
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      StreamSpecification:
+        StreamViewType: NEW_IMAGE
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: esp32-backend
+
+  # Plant Aggregates Table
+  # Purpose: Store time-series aggregates (hourly, daily, weekly) for efficient querying
+  # Composite partition key enables per-device, per-window-type queries
+  PlantAggregatesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: device_window
+          AttributeType: S
+        - AttributeName: window_start_ms
+          AttributeType: N
+      KeySchema:
+        - AttributeName: device_window
+          KeyType: HASH
+        - AttributeName: window_start_ms
+          KeyType: RANGE
+      StreamSpecification:
+        StreamViewType: NEW_IMAGE
+      TimeToLiveSpecification:
+        Enabled: true
+        AttributeName: ttl
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: esp32-backend
+
+  # Plant Insights Table
+  # Purpose: Store LLM-generated insights with recommendations
+  PlantInsightsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: hardware_id
+          AttributeType: S
+        - AttributeName: timestamp_ms
+          AttributeType: N
+      KeySchema:
+        - AttributeName: hardware_id
+          KeyType: HASH
+        - AttributeName: timestamp_ms
+          KeyType: RANGE
+      StreamSpecification:
+        StreamViewType: NEW_IMAGE
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: esp32-backend
+
+  # Plant Device Profiles Table
+  # Purpose: Store per-device configuration and learned patterns
+  PlantDeviceProfilesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: hardware_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: hardware_id
+          KeyType: HASH
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: esp32-backend
+
+  # Plant Device Status Table
+  # Purpose: Store per-device health summary and processing state
+  # GSI enables cross-device health queries without scans
+  PlantDeviceStatusTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: hardware_id
+          AttributeType: S
+        - AttributeName: health_category
+          AttributeType: S
+        - AttributeName: last_seen_ingest_time_ms
+          AttributeType: N
+      KeySchema:
+        - AttributeName: hardware_id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: HealthIndex
+          KeySchema:
+            - AttributeName: health_category
+              KeyType: HASH
+            - AttributeName: last_seen_ingest_time_ms
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: esp32-backend
+
+  # Plant Rollups Table
+  # Purpose: Store operational metrics in time buckets for dashboard queries
+  # CRITICAL: DO NOT enable DynamoDB Streams on this table (prevents infinite loops)
+  PlantRollupsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: bucket_key
+          AttributeType: S
+        - AttributeName: metric_key
+          AttributeType: S
+      KeySchema:
+        - AttributeName: bucket_key
+          KeyType: HASH
+        - AttributeName: metric_key
+          KeyType: RANGE
+      TimeToLiveSpecification:
+        Enabled: true
+        AttributeName: ttl
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: esp32-backend
+
+  # Plant Processed Readings Index Table
+  # Purpose: Track processed readings per pipeline stage for idempotency
+  # Stage-aware markers prevent cross-pipeline interference
+  PlantProcessedReadingsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: reading_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: reading_id
+          KeyType: HASH
+      TimeToLiveSpecification:
+        Enabled: true
+        AttributeName: ttl
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: esp32-backend
+
+  # Plant Insight Requests Table
+  # Purpose: Queue and track insight generation requests for rate limiting and batching
+  PlantInsightRequestsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: hardware_id
+          AttributeType: S
+        - AttributeName: request_time_ms
+          AttributeType: N
+        - AttributeName: status
+          AttributeType: S
+      KeySchema:
+        - AttributeName: hardware_id
+          KeyType: HASH
+        - AttributeName: request_time_ms
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: StatusIndex
+          KeySchema:
+            - AttributeName: status
+              KeyType: HASH
+            - AttributeName: request_time_ms
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      TimeToLiveSpecification:
+        Enabled: true
+        AttributeName: ttl
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: esp32-backend
 
   # ============================================================================
   # Lambda Functions
@@ -228,6 +458,640 @@ Resources:
       FunctionUrlConfig:
         AuthType: NONE
 
+  # Event Detector Lambda Function (Python)
+  # Purpose: Detect plant events from readings stream
+  # Triggered by: DynamoDB Stream on DeviceReadingsTable
+  EventDetectorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Runtime: python3.12
+      CodeUri: insights/functions/
+      Handler: event_detector.lambda_handler
+      Description: Detect plant events from readings stream
+      Timeout: 60
+      MemorySize: 512
+      Tracing: Active
+      Environment:
+        Variables:
+          PLANT_EVENTS_TABLE: !Ref PlantEventsTable
+          PROCESSED_READINGS_TABLE: !Ref PlantProcessedReadingsTable
+          POWERTOOLS_SERVICE_NAME: event-detector
+          LOG_LEVEL: INFO
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - Version: 2012-10-17
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:PutItem
+                - dynamodb:GetItem
+                - dynamodb:UpdateItem
+              Resource:
+                - !GetAtt PlantEventsTable.Arn
+                - !GetAtt PlantProcessedReadingsTable.Arn
+            - Effect: Allow
+              Action:
+                - dynamodb:GetRecords
+                - dynamodb:GetShardIterator
+                - dynamodb:DescribeStream
+                - dynamodb:ListStreams
+              Resource:
+                - !GetAtt DeviceReadingsTable.StreamArn
+      Events:
+        ReadingsStream:
+          Type: DynamoDB
+          Properties:
+            Stream: !GetAtt DeviceReadingsTable.StreamArn
+            StartingPosition: LATEST
+            BatchSize: 100
+            MaximumBatchingWindowInSeconds: 5
+            MaximumRetryAttempts: 3
+            BisectBatchOnFunctionError: true
+            FunctionResponseTypes:
+              - ReportBatchItemFailures
+
+  # Aggregator Lambda Function (Python)
+  # Purpose: Compute time-series aggregations from raw sensor data
+  # Triggered by: DynamoDB Stream on DeviceReadingsTable
+  AggregatorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Runtime: python3.12
+      CodeUri: insights/functions/
+      Handler: aggregator.lambda_handler
+      Description: Compute time-series aggregations from raw sensor data
+      Timeout: 60
+      MemorySize: 512
+      Tracing: Active
+      Environment:
+        Variables:
+          PLANT_AGGREGATES_TABLE: !Ref PlantAggregatesTable
+          DEVICE_READINGS_TABLE: !Ref DeviceReadingsTable
+          POWERTOOLS_SERVICE_NAME: aggregator
+          LOG_LEVEL: INFO
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - Version: 2012-10-17
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:PutItem
+                - dynamodb:GetItem
+                - dynamodb:UpdateItem
+                - dynamodb:Query
+              Resource:
+                - !GetAtt PlantAggregatesTable.Arn
+                - !GetAtt DeviceReadingsTable.Arn
+            - Effect: Allow
+              Action:
+                - dynamodb:GetRecords
+                - dynamodb:GetShardIterator
+                - dynamodb:DescribeStream
+                - dynamodb:ListStreams
+              Resource:
+                - !GetAtt DeviceReadingsTable.StreamArn
+      Events:
+        ReadingsStream:
+          Type: DynamoDB
+          Properties:
+            Stream: !GetAtt DeviceReadingsTable.StreamArn
+            StartingPosition: LATEST
+            BatchSize: 100
+            MaximumBatchingWindowInSeconds: 5
+            MaximumRetryAttempts: 3
+            BisectBatchOnFunctionError: true
+            FunctionResponseTypes:
+              - ReportBatchItemFailures
+
+  # Insight Generator Lambda Function (Python)
+  # Purpose: Generate LLM-powered natural language insights
+  # Triggered by: Scheduled events and InsightRequest items
+  InsightGeneratorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Runtime: python3.12
+      CodeUri: insights/functions/
+      Handler: insight_generator.lambda_handler
+      Description: Generate LLM-powered natural language insights
+      Timeout: 300
+      MemorySize: 1024
+      Tracing: Active
+      Environment:
+        Variables:
+          PLANT_INSIGHTS_TABLE: !Ref PlantInsightsTable
+          PLANT_INSIGHT_REQUESTS_TABLE: !Ref PlantInsightRequestsTable
+          PLANT_EVENTS_TABLE: !Ref PlantEventsTable
+          PLANT_AGGREGATES_TABLE: !Ref PlantAggregatesTable
+          DEVICE_READINGS_TABLE: !Ref DeviceReadingsTable
+          POWERTOOLS_SERVICE_NAME: insight-generator
+          LOG_LEVEL: INFO
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - Version: 2012-10-17
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+              Resource:
+                - !GetAtt PlantInsightsTable.Arn
+                - !GetAtt PlantInsightRequestsTable.Arn
+            - Effect: Allow
+              Action:
+                - dynamodb:Query
+                - dynamodb:GetItem
+              Resource:
+                - !GetAtt PlantEventsTable.Arn
+                - !GetAtt PlantAggregatesTable.Arn
+                - !GetAtt DeviceReadingsTable.Arn
+                - !GetAtt PlantInsightRequestsTable.Arn
+                - !Sub "${PlantInsightRequestsTable.Arn}/index/*"
+
+  # Rollup Updater Lambda Function (Python)
+  # Purpose: Update operational metrics rollups for dashboard queries
+  # Triggered by: DynamoDB Streams from multiple tables
+  RollupUpdaterFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Runtime: python3.12
+      CodeUri: insights/functions/
+      Handler: rollup_updater.lambda_handler
+      Description: Update operational metrics rollups for dashboard queries
+      Timeout: 60
+      MemorySize: 512
+      Tracing: Active
+      Environment:
+        Variables:
+          PLANT_ROLLUPS_TABLE: !Ref PlantRollupsTable
+          POWERTOOLS_SERVICE_NAME: rollup-updater
+          LOG_LEVEL: INFO
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - Version: 2012-10-17
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+                - dynamodb:GetItem
+              Resource:
+                - !GetAtt PlantRollupsTable.Arn
+            - Effect: Allow
+              Action:
+                - dynamodb:GetRecords
+                - dynamodb:GetShardIterator
+                - dynamodb:DescribeStream
+                - dynamodb:ListStreams
+              Resource:
+                - !GetAtt DeviceReadingsTable.StreamArn
+                - !GetAtt PlantEventsTable.StreamArn
+                - !GetAtt PlantAggregatesTable.StreamArn
+                - !GetAtt PlantInsightsTable.StreamArn
+      Events:
+        ReadingsStream:
+          Type: DynamoDB
+          Properties:
+            Stream: !GetAtt DeviceReadingsTable.StreamArn
+            StartingPosition: LATEST
+            BatchSize: 100
+            MaximumBatchingWindowInSeconds: 5
+            MaximumRetryAttempts: 3
+            BisectBatchOnFunctionError: true
+            FunctionResponseTypes:
+              - ReportBatchItemFailures
+        EventsStream:
+          Type: DynamoDB
+          Properties:
+            Stream: !GetAtt PlantEventsTable.StreamArn
+            StartingPosition: LATEST
+            BatchSize: 100
+            MaximumBatchingWindowInSeconds: 5
+            MaximumRetryAttempts: 3
+            BisectBatchOnFunctionError: true
+            FunctionResponseTypes:
+              - ReportBatchItemFailures
+        AggregatesStream:
+          Type: DynamoDB
+          Properties:
+            Stream: !GetAtt PlantAggregatesTable.StreamArn
+            StartingPosition: LATEST
+            BatchSize: 100
+            MaximumBatchingWindowInSeconds: 5
+            MaximumRetryAttempts: 3
+            BisectBatchOnFunctionError: true
+            FunctionResponseTypes:
+              - ReportBatchItemFailures
+        InsightsStream:
+          Type: DynamoDB
+          Properties:
+            Stream: !GetAtt PlantInsightsTable.StreamArn
+            StartingPosition: LATEST
+            BatchSize: 100
+            MaximumBatchingWindowInSeconds: 5
+            MaximumRetryAttempts: 3
+            BisectBatchOnFunctionError: true
+            FunctionResponseTypes:
+              - ReportBatchItemFailures
+
+  # Device Status Updater Lambda Function (Python)
+  # Purpose: Update device status from Readings stream
+  # Triggered by: DynamoDB Stream on DeviceReadingsTable
+  DeviceStatusUpdaterFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Runtime: python3.12
+      CodeUri: insights/functions/
+      Handler: device_status_updater.lambda_handler
+      Description: Update device status from Readings stream
+      Timeout: 60
+      MemorySize: 512
+      Tracing: Active
+      Environment:
+        Variables:
+          DEVICE_STATUS_TABLE: !Ref PlantDeviceStatusTable
+          DEVICE_PROFILES_TABLE: !Ref PlantDeviceProfilesTable
+          PROCESSED_READINGS_TABLE: !Ref PlantProcessedReadingsTable
+          POWERTOOLS_SERVICE_NAME: device-status-updater
+          LOG_LEVEL: INFO
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - Version: 2012-10-17
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:UpdateItem
+                - dynamodb:PutItem
+              Resource:
+                - !GetAtt PlantDeviceStatusTable.Arn
+                - !GetAtt PlantDeviceProfilesTable.Arn
+                - !GetAtt PlantProcessedReadingsTable.Arn
+            - Effect: Allow
+              Action:
+                - dynamodb:GetRecords
+                - dynamodb:GetShardIterator
+                - dynamodb:DescribeStream
+                - dynamodb:ListStreams
+              Resource:
+                - !GetAtt DeviceReadingsTable.StreamArn
+      Events:
+        ReadingsStream:
+          Type: DynamoDB
+          Properties:
+            Stream: !GetAtt DeviceReadingsTable.StreamArn
+            StartingPosition: LATEST
+            BatchSize: 100
+            MaximumBatchingWindowInSeconds: 5
+            MaximumRetryAttempts: 3
+            BisectBatchOnFunctionError: true
+            FunctionResponseTypes:
+              - ReportBatchItemFailures
+
+  # Plant Insights API Lambda Function (Python)
+  # Purpose: API endpoints for querying and managing Plant Insights data
+  # Triggered by: API Gateway or Function URL
+  PlantInsightsApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Runtime: python3.12
+      CodeUri: insights/functions/
+      Handler: api.lambda_handler
+      Description: API endpoints for querying and managing Plant Insights data
+      Timeout: 30
+      MemorySize: 512
+      Tracing: Active
+      Environment:
+        Variables:
+          PLANT_EVENTS_TABLE: !Ref PlantEventsTable
+          PLANT_AGGREGATES_TABLE: !Ref PlantAggregatesTable
+          PLANT_INSIGHTS_TABLE: !Ref PlantInsightsTable
+          PLANT_DEVICE_PROFILES_TABLE: !Ref PlantDeviceProfilesTable
+          PLANT_DEVICE_STATUS_TABLE: !Ref PlantDeviceStatusTable
+          PLANT_ROLLUPS_TABLE: !Ref PlantRollupsTable
+          POWERTOOLS_SERVICE_NAME: plant-insights-api
+          LOG_LEVEL: INFO
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - Version: 2012-10-17
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:Query
+                - dynamodb:GetItem
+                - dynamodb:Scan
+              Resource:
+                - !GetAtt PlantEventsTable.Arn
+                - !Sub "${PlantEventsTable.Arn}/index/*"
+                - !GetAtt PlantAggregatesTable.Arn
+                - !GetAtt PlantInsightsTable.Arn
+                - !GetAtt PlantDeviceProfilesTable.Arn
+                - !GetAtt PlantDeviceStatusTable.Arn
+                - !Sub "${PlantDeviceStatusTable.Arn}/index/*"
+                - !GetAtt PlantRollupsTable.Arn
+            - Effect: Allow
+              Action:
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+              Resource:
+                - !GetAtt PlantDeviceProfilesTable.Arn
+      FunctionUrlConfig:
+        AuthType: NONE
+        Cors:
+          AllowOrigins:
+            - "*"
+          AllowMethods:
+            - GET
+            - POST
+            - PUT
+            - DELETE
+          AllowHeaders:
+            - "*"
+          MaxAge: 300
+
+  # ============================================================================
+  # EventBridge Schedules
+  # ============================================================================
+
+  # Daily Aggregate Computation Schedule
+  # Purpose: Trigger Aggregator Lambda daily at 00:10 UTC to compute previous day's aggregates
+  # Requirement: 6.3
+  DailyAggregateSchedule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: Trigger daily aggregate computation at 00:10 UTC
+      ScheduleExpression: cron(10 0 * * ? *)
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt AggregatorFunction.Arn
+          Id: DailyAggregateTarget
+          Input: |
+            {
+              "source": "aws.events",
+              "detail-type": "Scheduled Event",
+              "detail": {
+                "aggregation_type": "daily"
+              }
+            }
+
+  # Permission for EventBridge to invoke Aggregator Lambda for daily schedule
+  DailyAggregateSchedulePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref AggregatorFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt DailyAggregateSchedule.Arn
+
+  # Weekly Aggregate Computation Schedule
+  # Purpose: Trigger Aggregator Lambda weekly at 00:20 UTC on Mondays to compute last week's aggregates
+  # Requirement: 6.4
+  WeeklyAggregateSchedule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: Trigger weekly aggregate computation at 00:20 UTC on Mondays
+      ScheduleExpression: cron(20 0 ? * MON *)
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt AggregatorFunction.Arn
+          Id: WeeklyAggregateTarget
+          Input: |
+            {
+              "source": "aws.events",
+              "detail-type": "Scheduled Event",
+              "detail": {
+                "aggregation_type": "weekly"
+              }
+            }
+
+  # Permission for EventBridge to invoke Aggregator Lambda for weekly schedule
+  WeeklyAggregateSchedulePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref AggregatorFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt WeeklyAggregateSchedule.Arn
+
+  # Scheduled Insight Requests Schedule
+  # Purpose: Trigger Insight Generator Lambda twice daily to create InsightRequests for active devices
+  # Requirement: 8.12
+  # Schedule: 08:00 UTC and 20:00 UTC (morning and evening)
+  ScheduledInsightRequestsSchedule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: Trigger scheduled insight request creation twice daily at 08:00 and 20:00 UTC
+      ScheduleExpression: cron(0 8,20 * * ? *)
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt InsightGeneratorFunction.Arn
+          Id: ScheduledInsightRequestsTarget
+          Input: |
+            {
+              "source": "aws.events",
+              "detail-type": "Scheduled Event",
+              "detail": {
+                "trigger_type": "scheduled"
+              }
+            }
+
+  # Permission for EventBridge to invoke Insight Generator Lambda for scheduled requests
+  ScheduledInsightRequestsSchedulePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref InsightGeneratorFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt ScheduledInsightRequestsSchedule.Arn
+
+  # ============================================================================
+  # CloudFront Cache Policies
+  # ============================================================================
+
+  # Data Plane Cache Policy
+  # Purpose: Define caching behavior for Data Plane endpoints
+  # - No caching by default (TTL=0) for write operations
+  # - Short TTL (60s) for health endpoint
+  # - Include authentication and CORS headers in cache key
+  DataPlaneCachePolicy:
+    Type: AWS::CloudFront::CachePolicy
+    Properties:
+      CachePolicyConfig:
+        Name: !Sub "DataPlaneCachePolicy-${Environment}"
+        Comment: Cache policy for Data Plane API endpoints
+        DefaultTTL: 0
+        MinTTL: 0
+        MaxTTL: 60
+        ParametersInCacheKeyAndForwardedToOrigin:
+          EnableAcceptEncodingGzip: true
+          EnableAcceptEncodingBrotli: true
+          QueryStringsConfig:
+            QueryStringBehavior: none
+          HeadersConfig:
+            HeaderBehavior: whitelist
+            Headers:
+              - X-API-Key
+              - Origin
+          CookiesConfig:
+            CookieBehavior: none
+
+  # Control Plane Cache Policy
+  # Purpose: Define caching behavior for Control Plane endpoints
+  # - No caching by default (TTL=0) for write operations
+  # - Short TTL (300s) for read operations
+  # - Include authentication, query strings, and CORS headers in cache key
+  ControlPlaneCachePolicy:
+    Type: AWS::CloudFront::CachePolicy
+    Properties:
+      CachePolicyConfig:
+        Name: !Sub "ControlPlaneCachePolicy-${Environment}"
+        Comment: Cache policy for Control Plane API endpoints
+        DefaultTTL: 0
+        MinTTL: 0
+        MaxTTL: 300
+        ParametersInCacheKeyAndForwardedToOrigin:
+          EnableAcceptEncodingGzip: true
+          EnableAcceptEncodingBrotli: true
+          QueryStringsConfig:
+            QueryStringBehavior: all
+          HeadersConfig:
+            HeaderBehavior: whitelist
+            Headers:
+              - Authorization
+              - X-API-Key
+              - Origin
+          CookiesConfig:
+            CookieBehavior: none
+
+  # ============================================================================
+  # CloudFront Origin Request Policy
+  # ============================================================================
+
+  # API Origin Request Policy
+  # Purpose: Define which headers, query strings, and cookies are forwarded to Lambda origins
+  # - Forward authentication headers (X-API-Key, Authorization)
+  # - Forward content negotiation headers (Content-Type, Accept)
+  # - Forward CORS headers (Origin, Access-Control-Request-*)
+  # - Forward all query strings (for filtering and pagination)
+  # - No cookies (API uses header-based auth)
+  ApiOriginRequestPolicy:
+    Type: AWS::CloudFront::OriginRequestPolicy
+    Properties:
+      OriginRequestPolicyConfig:
+        Name: !Sub "ApiOriginRequestPolicy-${Environment}"
+        Comment: Origin request policy for API endpoints - forwards auth and CORS headers
+        HeadersConfig:
+          HeaderBehavior: whitelist
+          Headers:
+            - X-API-Key
+            - Content-Type
+            - Accept
+            - Origin
+            - Access-Control-Request-Method
+            - Access-Control-Request-Headers
+        QueryStringsConfig:
+          QueryStringBehavior: all
+        CookiesConfig:
+          CookieBehavior: none
+
+  # ============================================================================
+  # CloudFront Distribution
+  # ============================================================================
+
+  # API Distribution
+  # Purpose: Unified CloudFront distribution for both Data Plane and Control Plane APIs
+  # - Routes /api/data/* to Data Plane Lambda
+  # - Routes /api/control/* to Control Plane Lambda
+  # - Provides single domain for all API access
+  # - Enables future enhancements (custom domain, WAF, etc.)
+  ApiDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Comment: !Sub "API Distribution for ${Environment} environment"
+        Enabled: true
+        HttpVersion: http2and3
+        PriceClass: PriceClass_100
+        Origins:
+          # Data Plane Origin - extracts domain from Lambda Function URL
+          - Id: DataPlaneOrigin
+            DomainName: !Select [2, !Split ["/", !GetAtt DataPlaneFunctionUrl.FunctionUrl]]
+            CustomOriginConfig:
+              HTTPSPort: 443
+              OriginProtocolPolicy: https-only
+              OriginSSLProtocols:
+                - TLSv1.2
+              OriginReadTimeout: 30
+              OriginKeepaliveTimeout: 5
+          # Control Plane Origin - extracts domain from Lambda Function URL
+          - Id: ControlPlaneOrigin
+            DomainName: !Select [2, !Split ["/", !GetAtt ControlPlaneFunctionUrl.FunctionUrl]]
+            CustomOriginConfig:
+              HTTPSPort: 443
+              OriginProtocolPolicy: https-only
+              OriginSSLProtocols:
+                - TLSv1.2
+              OriginReadTimeout: 30
+              OriginKeepaliveTimeout: 5
+        # Default cache behavior - routes unmatched paths to Control Plane
+        DefaultCacheBehavior:
+          TargetOriginId: ControlPlaneOrigin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+            - PUT
+            - POST
+            - PATCH
+            - DELETE
+          CachedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+          Compress: true
+          CachePolicyId: !Ref ControlPlaneCachePolicy
+          OriginRequestPolicyId: !Ref ApiOriginRequestPolicy
+        # Cache behaviors for path-based routing (evaluated in precedence order)
+        CacheBehaviors:
+          # Data Plane routes - /api/data/*
+          - PathPattern: /api/data/*
+            TargetOriginId: DataPlaneOrigin
+            ViewerProtocolPolicy: redirect-to-https
+            AllowedMethods:
+              - GET
+              - HEAD
+              - OPTIONS
+              - PUT
+              - POST
+              - PATCH
+              - DELETE
+            CachedMethods:
+              - GET
+              - HEAD
+              - OPTIONS
+            Compress: true
+            CachePolicyId: !Ref DataPlaneCachePolicy
+            OriginRequestPolicyId: !Ref ApiOriginRequestPolicy
+          # Control Plane routes - /api/control/*
+          - PathPattern: /api/control/*
+            TargetOriginId: ControlPlaneOrigin
+            ViewerProtocolPolicy: redirect-to-https
+            AllowedMethods:
+              - GET
+              - HEAD
+              - OPTIONS
+              - PUT
+              - POST
+              - PATCH
+              - DELETE
+            CachedMethods:
+              - GET
+              - HEAD
+              - OPTIONS
+            Compress: true
+            CachePolicyId: !Ref ControlPlaneCachePolicy
+            OriginRequestPolicyId: !Ref ApiOriginRequestPolicy
+
 Outputs:
   DataPlaneFunctionUrl:
     Description: Data Plane API Function URL
@@ -236,3 +1100,19 @@ Outputs:
   ControlPlaneFunctionUrl:
     Description: Control Plane API Function URL
     Value: !GetAtt ControlPlaneFunctionUrl.FunctionUrl
+
+  PlantInsightsApiFunctionUrl:
+    Description: Plant Insights API Function URL
+    Value: !GetAtt PlantInsightsApiFunctionUrl.FunctionUrl
+
+  ApiDistributionDomain:
+    Description: CloudFront distribution domain name for unified API access
+    Value: !GetAtt ApiDistribution.DomainName
+    Export:
+      Name: !Sub "${AWS::StackName}-ApiDistributionDomain"
+
+  ApiDistributionId:
+    Description: CloudFront distribution ID
+    Value: !Ref ApiDistribution
+    Export:
+      Name: !Sub "${AWS::StackName}-ApiDistributionId"

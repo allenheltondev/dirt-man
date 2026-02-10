@@ -141,6 +141,7 @@ curl -X POST https://your-data-plane-url/data \
 - `DELETE /api-keys/{key_id}` - Revoke API key
 - `GET /devices` - List devices
 - `GET /devices/{hardware_id}` - Get device details
+- `PUT /devices/{hardware_id}` - Update device friendly_name
 - `GET /devices/{hardware_id}/readings` - Query readings
 - `GET /devices/{hardware_id}/latest` - Get latest reading
 - `GET /health` - Health check

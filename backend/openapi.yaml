@@ -153,7 +153,7 @@ paths:
         - BearerAuth: []
       parameters:
         - $ref: '#/components/parameters/Limit'
-        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/PageToken'
       responses:
         '200':
           description: API keys retrieved successfully
@@ -211,7 +211,7 @@ paths:
         - BearerAuth: []
       parameters:
         - $ref: '#/components/parameters/Limit'
-        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/PageToken'
       responses:
         '200':
           description: Devices retrieved successfully
@@ -248,6 +248,48 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/DeviceDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+    put:
+      tags:
+        - Control Plane - Devices
+      summary: Update device friendly name
+      description: |
+        Update the friendly_name field for a device. Set to null to remove the friendly name.
+
+        **Important:** Historical sensor readings preserve the friendly_name value at the time
+        of ingestion, so changes to the device's friendly_name do not affect previously stored readings.
+      operationId: updateDeviceFriendlyName
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: hardware_id
+          in: path
+          required: true
+          description: MAC address of the device (XX:XX:XX:XX:XX:XX)
+          schema:
+            type: string
+            pattern: '^[A-F0-9]{2}:[A-F0-9]{2}:[A-F0-9]{2}:[A-F0-9]{2}:[A-F0-9]{2}:[A-F0-9]{2}$'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateFriendlyNameRequest'
+      responses:
+        '200':
+          description: Friendly name updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdateFriendlyNameResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
@@ -295,7 +337,7 @@ paths:
             minimum: 1
             maximum: 1000
             default: 50
-        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/PageToken'
       responses:
         '200':
           description: Readings retrieved successfully
@@ -368,10 +410,10 @@ components:
         maximum: 100
         default: 50
 
-    Cursor:
-      name: cursor
+    PageToken:
+      name: pageToken
       in: query
-      description: Pagination cursor from previous response (base64-encoded)
+      description: Pagination token from previous response (base64-encoded)
       schema:
         type: string
 
@@ -604,9 +646,9 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/ApiKey'
-        next_cursor:
+        nextPageToken:
           type: string
-          description: Cursor for next page (omitted if no more results)
+          description: Token for next page (omitted if no more results)
 
     ApiKey:
       type: object
@@ -656,9 +698,9 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/DeviceSummary'
-        next_cursor:
+        nextPageToken:
           type: string
-          description: Cursor for next page (omitted if no more results)
+          description: Token for next page (omitted if no more results)
 
     DeviceSummary:
       type: object
@@ -730,6 +772,37 @@ components:
           description: UUID v4 from most recent boot
           example: "7c9e6679-7425-40de-944b-e07fc1f90ae7"
 
+    UpdateFriendlyNameRequest:
+      type: object
+      required:
+        - friendly_name
+      properties:
+        friendly_name:
+          type: string
+          nullable: true
+          maxLength: 64
+          description: |
+            New friendly name for the device (max 64 characters, safe ASCII only).
+            Set to null to remove the friendly name.
+          example: "updated-greenhouse-sensor"
+
+    UpdateFriendlyNameResponse:
+      type: object
+      properties:
+        message:
+          type: string
+          description: Success message
+          example: "Friendly name updated successfully"
+        hardware_id:
+          type: string
+          description: MAC address of the device
+          example: "AA:BB:CC:DD:EE:FF"
+        friendly_name:
+          type: string
+          nullable: true
+          description: Updated friendly name (or null if removed)
+          example: "updated-greenhouse-sensor"
+
     QueryReadingsResponse:
       type: object
       properties:
@@ -737,9 +810,9 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Reading'
-        next_cursor:
+        nextPageToken:
           type: string
-          description: Cursor for next page (omitted if no more results)
+          description: Token for next page (omitted if no more results)
 
     HealthResponse:
       type: object
@@ -793,6 +866,10 @@ components:
               value:
                 error: "INVALID_FORMAT"
                 message: "Invalid format for field: hardware_id"
+            invalid_value:
+              value:
+                error: "INVALID_VALUE"
+                message: "Invalid value for field: friendly_name: Friendly name length 65 exceeds maximum of 64 characters"
             batch_size_exceeded:
               value:
                 error: "BATCH_SIZE_EXCEEDED"

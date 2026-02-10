@@ -42,7 +42,7 @@ pub async fn query_readings(
     limit: Option<i32>,
     cursor: Option<String>,
 ) -> Result<ReadingsQueryResponse, DatabaseError> {
-    use esp32_backend::shared::cursor::{decode_readings_cursor, encode_readings_cursor};
+    use esp32_backend::shared::cursor::{decode_readings_page_token, encode_readings_page_token};
 
     // Validate timestamp bounds
     if from_ms < 0 {
@@ -103,7 +103,7 @@ pub async fn query_readings(
 
     // Add cursor if provided
     if let Some(cursor_str) = cursor {
-        let cursor = decode_readings_cursor(&cursor_str)
+        let cursor = decode_readings_page_token(&cursor_str)
             .map_err(|e| DatabaseError::Serialization(format!("Invalid cursor: {}", e.message)))?;
 
         let start_key = cursor_to_exclusive_start_key(&cursor);
@@ -128,7 +128,7 @@ pub async fn query_readings(
     let next_cursor = result.last_evaluated_key.and_then(|key| {
         let hardware_id = key.get("hardware_id")?.as_s().ok()?;
         let ts_batch = key.get("ts_batch")?.as_s().ok()?;
-        encode_readings_cursor(hardware_id, ts_batch).ok()
+        encode_readings_page_token(hardware_id, ts_batch).ok()
     });
 
     Ok(ReadingsQueryResponse {
@@ -312,7 +312,7 @@ fn attribute_value_to_sensor_status(attr: &AttributeValue) -> Result<SensorStatu
 
 /// Convert cursor to DynamoDB exclusive start key
 fn cursor_to_exclusive_start_key(
-    cursor: &esp32_backend::shared::cursor::ReadingsCursor,
+    cursor: &esp32_backend::shared::cursor::ReadingsPageToken,
 ) -> HashMap<String, AttributeValue> {
     let mut key = HashMap::new();
     key.insert(
@@ -548,9 +548,9 @@ mod tests {
 
     #[test]
     fn test_cursor_to_exclusive_start_key() {
-        use esp32_backend::shared::cursor::ReadingsCursor;
+        use esp32_backend::shared::cursor::ReadingsPageToken;
 
-        let cursor = ReadingsCursor {
+        let cursor = ReadingsPageToken {
             hardware_id: "AA:BB:CC:DD:EE:FF".to_string(),
             ts_batch: "1704067800000#batch_123".to_string(),
         };

@@ -2,7 +2,8 @@ use aws_sdk_dynamodb::types::{AttributeValue, Put, TransactWriteItem};
 use aws_sdk_dynamodb::Client as DynamoDbClient;
 use std::collections::HashMap;
 
-use esp32_backend::{Clock, Reading};
+use esp32_backend::domain::{Reading, SensorStatus, SensorValues};
+use esp32_backend::Clock;
 
 use crate::error::DatabaseError;
 
@@ -155,9 +156,7 @@ pub async fn transact_write_reading_if_new_batch(
 }
 
 /// Convert SensorValues to DynamoDB attribute map
-fn sensor_values_to_attribute_map(
-    sensors: &esp32_backend::SensorValues,
-) -> HashMap<String, AttributeValue> {
+fn sensor_values_to_attribute_map(sensors: &SensorValues) -> HashMap<String, AttributeValue> {
     let mut map = HashMap::new();
 
     if let Some(temp) = sensors.bme280_temp_c {
@@ -195,9 +194,7 @@ fn sensor_values_to_attribute_map(
 }
 
 /// Convert SensorStatus to DynamoDB attribute map
-fn sensor_status_to_attribute_map(
-    status: &esp32_backend::SensorStatus,
-) -> HashMap<String, AttributeValue> {
+fn sensor_status_to_attribute_map(status: &SensorStatus) -> HashMap<String, AttributeValue> {
     let mut map = HashMap::new();
 
     map.insert(
@@ -239,7 +236,8 @@ fn is_conditional_check_failed(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use esp32_backend::{FixedClock, SensorStatus, SensorValues};
+    use esp32_backend::domain::{Reading, SensorStatus, SensorValues};
+    use esp32_backend::FixedClock;
 
     fn create_test_reading() -> Reading {
         Reading {

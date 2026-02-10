@@ -563,6 +563,78 @@ GET /devices/AA:BB:CC:DD:EE:FF
 ```
 
 
+### PUT /devices/{hardware_id}
+
+Update the friendly_name field for a device.
+
+**Note:** Historical sensor readings preserve the friendly_name value at the time of ingestion, so changes to the device's friendly_name do not affect previously stored readings.
+
+**Authentication:** Required (Bearer token)
+
+**Path Parameters:**
+- `hardware_id` (string, required): MAC address of the device (XX:XX:XX:XX:XX:XX)
+
+**Request Body:**
+```json
+{
+  "friendly_name": "new-device-name"
+}
+```
+
+**Request Fields:**
+- `friendly_name` (string or null, required): New friendly name (max 64 characters, safe ASCII only) or null to remove
+
+**Example Request:**
+```
+PUT /devices/AA:BB:CC:DD:EE:FF
+Content-Type: application/json
+
+{
+  "friendly_name": "updated-greenhouse-sensor"
+}
+```
+
+**Success Response (200 OK):**
+```json
+{
+  "message": "Friendly name updated successfully",
+  "hardware_id": "AA:BB:CC:DD:EE:FF",
+  "friendly_name": "updated-greenhouse-sensor"
+}
+```
+
+**Response Fields:**
+- `message` (string): Success message
+- `hardware_id` (string): MAC address of the device
+- `friendly_name` (string or null): Updated friendly name
+
+**Error Responses:**
+
+**400 Bad Request (Invalid friendly_name):**
+```json
+{
+  "error": "INVALID_VALUE",
+  "message": "Invalid value for field: friendly_name: Friendly name length 65 exceeds maximum of 64 characters"
+}
+```
+
+**404 Not Found:**
+```json
+{
+  "error": "DEVICE_NOT_FOUND",
+  "message": "Device not found"
+}
+```
+
+**401 Unauthorized:**
+```json
+{
+  "error": "INVALID_TOKEN",
+  "message": "Bearer token is invalid"
+}
+```
+
+
 ### GET /devices/{hardware_id}/readings
 
 Query historical sensor readings for a device with time range filtering and pagination.

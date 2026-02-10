@@ -708,7 +708,7 @@
 
 ## 14. Optional Enhancements
 
-- [ ] 14.1* Implement friendly_name update endpoint
+- [x] 14.1* Implement friendly_name update endpoint
   - Add PUT /devices/{hardware_id} endpoint to Control Plane
   - Allow updating friendly_name field
   - Validate new friendly_name

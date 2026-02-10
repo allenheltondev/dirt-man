@@ -314,7 +314,7 @@ pub async fn list_devices(
     limit: Option<i32>,
     cursor: Option<String>,
 ) -> Result<DeviceListResponse, DatabaseError> {
-    use esp32_backend::shared::cursor::{decode_device_cursor, encode_device_cursor};
+    use esp32_backend::shared::cursor::{decode_device_page_token, encode_device_page_token};
 
     // Validate and apply limit (default 50, max 1000)
     let limit = match limit {
@@ -340,7 +340,7 @@ pub async fn list_devices(
 
     // Add cursor if provided
     if let Some(cursor_str) = cursor {
-        let cursor = decode_device_cursor(&cursor_str)
+        let cursor = decode_device_page_token(&cursor_str)
             .map_err(|e| DatabaseError::Serialization(format!("Invalid cursor: {}", e.message)))?;
 
         let start_key = cursor_to_exclusive_start_key(&cursor);
@@ -365,7 +365,7 @@ pub async fn list_devices(
     let next_cursor = result.last_evaluated_key.and_then(|key| {
         let hardware_id = key.get("hardware_id")?.as_s().ok()?;
         let gsi1sk = key.get("gsi1sk")?.as_s().ok()?;
-        encode_device_cursor(hardware_id, gsi1sk).ok()
+        encode_device_page_token(hardware_id, gsi1sk).ok()
     });
 
     Ok(DeviceListResponse {
@@ -376,7 +376,7 @@ pub async fn list_devices(
 
 /// Convert cursor to DynamoDB exclusive start key
 fn cursor_to_exclusive_start_key(
-    cursor: &esp32_backend::shared::cursor::DeviceListCursor,
+    cursor: &esp32_backend::shared::cursor::DeviceListPageToken,
 ) -> HashMap<String, AttributeValue> {
     let mut key = HashMap::new();
     key.insert(

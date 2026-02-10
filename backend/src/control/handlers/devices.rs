@@ -89,7 +89,7 @@ pub async fn list_devices(
     info!(
         request_id = %request_id,
         count = result.devices.len(),
-        has_next_cursor = result.next_cursor.is_some(),
+        has_next_cursor = result.page_token.is_some(),
         "Retrieved devices from DynamoDB"
     );
 
@@ -110,7 +110,7 @@ pub async fn list_devices(
     // Build response
     let response = ListDevicesResponse {
         devices: device_items,
-        next_cursor: result.next_cursor,
+        next_cursor: result.page_token,
     };
 
     let response_body = serde_json::to_string(&response).map_err(|e| {
@@ -364,6 +364,162 @@ pub async fn get_device_detail(
         request_id = %request_id,
         hardware_id = %hardware_id,
         "Returning successful device detail response"
+    );
+
+    Ok(Response::builder()
+        .status(200)
+        .header("content-type", "application/json")
+        .body(Body::from(response_body))
+        .unwrap())
+}
+
+/// Request payload for updating device friendly_name
+#[derive(Debug, serde::Deserialize)]
+pub struct UpdateFriendlyNameRequest {
+    /// New friendly name (or null to remove)
+    pub friendly_name: Option<String>,
+}
+
+/// Response payload for updating device friendly_name
+#[derive(Debug, Serialize)]
+pub struct UpdateFriendlyNameResponse {
+    /// Success message
+    pub message: String,
+    /// MAC address of the device
+    pub hardware_id: String,
+    /// Updated friendly name (or null if removed)
+    pub friendly_name: Option<String>,
+}
+
+/// Handler for PUT /devices/{hardware_id} endpoint
+///
+/// Updates the friendly_name field for a device.
+/// Note: Historical readings preserve the friendly_name value at the time of ingestion,
+/// so changes to the device's friendly_name do not affect previously stored readings.
+///
+/// # Path Parameters
+/// * `hardware_id` - MAC address of the device
+///
+/// # Request Body
+/// * `friendly_name` - New friendly name (or null to remove)
+///
+/// # Returns
+/// * HTTP 200 with success message
+/// * HTTP 400 if friendly_name validation fails
+/// * HTTP 401 if Bearer token is invalid
+/// * HTTP 404 if device not found
+pub async fn update_device_friendly_name(
+    event: Request,
+    config: &ControlConfig,
+    hardware_id: &str,
+) -> Result<Response<Body>, ApiError> {
+    let request_id = event.lambda_context().request_id.clone();
+
+    info!(
+        request_id = %request_id,
+        hardware_id = %hardware_id,
+        "Processing update device friendly_name request"
+    );
+
+    // Validate Bearer token
+    validate_bearer_token(&event)?;
+
+    // Parse request body
+    let body = match event.body() {
+        Body::Text(text) => text,
+        Body::Binary(bytes) => std::str::from_utf8(bytes).map_err(|e| {
+            error!(request_id = %request_id, error = %e, "Failed to parse body as UTF-8");
+            ApiError::Validation(crate::error::ValidationError::InvalidFormat(
+                "body".to_string(),
+            ))
+        })?,
+        Body::Empty => {
+            return Err(ApiError::Validation(
+                crate::error::ValidationError::MissingField("body".to_string()),
+            ))
+        }
+    };
+
+    let request: UpdateFriendlyNameRequest = serde_json::from_str(body).map_err(|e| {
+        error!(request_id = %request_id, error = %e, "Failed to parse request body");
+        ApiError::Validation(crate::error::ValidationError::InvalidFormat(
+            "body".to_string(),
+        ))
+    })?;
+
+    // Validate friendly_name if provided
+    if let Some(ref name) = request.friendly_name {
+        esp32_backend::shared::validators::validate_friendly_name(name).map_err(|e| {
+            error!(request_id = %request_id, error = %e, "Friendly name validation failed");
+            ApiError::Validation(crate::error::ValidationError::InvalidValue(
+                format!("friendly_name: {}", e.message),
+            ))
+        })?;
+    }
+
+    info!(
+        request_id = %request_id,
+        hardware_id = %hardware_id,
+        has_friendly_name = request.friendly_name.is_some(),
+        "Validated request"
+    );
+
+    // Check if device exists
+    let device = crate::repo::devices::get_device(
+        &config.dynamodb_client,
+        &config.devices_table,
+        hardware_id,
+    )
+    .await?;
+
+    if device.is_none() {
+        info!(
+            request_id = %request_id,
+            hardware_id = %hardware_id,
+            "Device not found"
+        );
+        return Err(ApiError::NotFound(
+            crate::error::NotFoundError::DeviceNotFound,
+        ));
+    }
+
+    info!(
+        request_id = %request_id,
+        hardware_id = %hardware_id,
+        "Updating friendly_name in DynamoDB"
+    );
+
+    // Update friendly_name
+    crate::repo::devices::update_friendly_name(
+        &config.dynamodb_client,
+        &config.devices_table,
+        hardware_id,
+        request.friendly_name.as_deref(),
+    )
+    .await?;
+
+    info!(
+        request_id = %request_id,
+        hardware_id = %hardware_id,
+        "Successfully updated friendly_name"
+    );
+
+    // Build response
+    let response = UpdateFriendlyNameResponse {
+        message: "Friendly name updated successfully".to_string(),
+        hardware_id: hardware_id.to_string(),
+        friendly_name: request.friendly_name,
+    };
+
+    let response_body = serde_json::to_string(&response).map_err(|e| {
+        error!(request_id = %request_id, error = %e, "Failed to serialize response");
+        ApiError::Internal(format!("Failed to serialize response: {}", e))
+    })?;
+
+    info!(
+        request_id = %request_id,
+        hardware_id = %hardware_id,
+        "Returning successful update response"
     );
 
     Ok(Response::builder()
@@ -800,6 +956,55 @@ mod integration_style_tests {
         };
 
         let json = serde_json::to_string(&list_item).unwrap();
+        assert!(json.contains("friendly_name"));
+        assert!(json.contains("null"));
+    }
+
+    #[tokio::test]
+    async fn test_update_friendly_name_request_serialization() {
+        use super::UpdateFriendlyNameRequest;
+
+        // Test with friendly_name
+        let json = r#"{"friendly_name":"new-name"}"#;
+        let request: UpdateFriendlyNameRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(request.friendly_name, Some("new-name".to_string()));
+
+        // Test with null friendly_name
+        let json = r#"{"friendly_name":null}"#;
+        let request: UpdateFriendlyNameRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(request.friendly_name, None);
+    }
+
+    #[tokio::test]
+    async fn test_update_friendly_name_response_serialization() {
+        use super::UpdateFriendlyNameResponse;
+
+        let response = UpdateFriendlyNameResponse {
+            message: "Friendly name updated successfully".to_string(),
+            hardware_id: "AA:BB:CC:DD:EE:FF".to_string(),
+            friendly_name: Some("new-name".to_string()),
+        };
+
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(json.contains("message"));
+        assert!(json.contains("hardware_id"));
+        assert!(json.contains("friendly_name"));
+        assert!(json.contains("new-name"));
+    }
+
+    #[tokio::test]
+    async fn test_update_friendly_name_response_serialization_null() {
+        use super::UpdateFriendlyNameResponse;
+
+        let response = UpdateFriendlyNameResponse {
+            message: "Friendly name updated successfully".to_string(),
+            hardware_id: "AA:BB:CC:DD:EE:FF".to_string(),
+            friendly_name: None,
+        };
+
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(json.contains("message"));
+        assert!(json.contains("hardware_id"));
         assert!(json.contains("friendly_name"));
         assert!(json.contains("null"));
     }
